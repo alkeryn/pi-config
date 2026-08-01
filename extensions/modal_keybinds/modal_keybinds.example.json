@@ -1,0 +1,22 @@
+{
+  "comment": "Copy this file to ~/.pi/agent/modal_keybinds.json and edit. It is deep-merged over the extension's defaults, so you only need to list changes. NOTE: ctrl+x is reserved by app.message.copy and only works as a prefix after you rebind it in ~/.pi/agent/keybindings.json, e.g. { \"app.message.copy\": [\"ctrl+shift+x\"] }.",
+
+  "timeoutMs": 5000,
+
+  "bindings": {
+    "alt+x": {
+      "l": { "type": "model", "label": "Switch model" },
+      "c": { "type": "compact", "label": "Compact conversation" },
+      "f": { "type": "message", "text": "Fix the latest errors in the code.", "label": "Fix errors" },
+      "s": { "type": "message", "text": "Summarize what changed in this session.", "label": "Summarize session" },
+      "e": { "type": "editorAppend", "text": "\n> ", "label": "Quote line" },
+      "n": { "type": "notify", "message": "hello from alt+x n", "label": "Test notification" },
+      "d": { "type": "handler", "name": "toggleDemoWidget", "label": "Toggle demo widget" }
+    },
+
+    "ctrl+x": {
+      "l": { "type": "model", "label": "Switch model" },
+      "c": { "type": "compact", "label": "Compact conversation" }
+    }
+  }
+}
