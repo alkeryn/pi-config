@@ -1,15 +1,13 @@
 {
-  "comment": "Copy the pieces you want into ~/.pi/agent/keybindings.json. The \"modal\" block is read by the modal_keybinds extension; pi itself ignores it. Entries in the modal block are deep-merged over the extension's built-in defaults, so you only need to list what you want to change.",
+  "comment": "Copy the pieces you want into ~/.pi/agent/keybindings.json. The \"modal\" block is read by the modal_keybinds extension; pi itself ignores it. The extension ships with NO built-in bindings — the modal menu shows exactly what you configure here (old configs still merge over the empty defaults).",
 
   "comment2": "The app.message.copy rebind below is optional. Prefixes are handled by the extension directly (not pi shortcuts), so nothing conflicts and no warning is printed. But if you leave app.message.copy on ctrl+x, the modal owns ctrl+x while the editor is focused and copy would be unreachable from there, so moving it elsewhere is recommended.",
 
-  "comment3": "Handler names containing a ':' are event channels on pi.events (pi's shared extension event bus): modal_keybinds emits { ctx, pi } on that channel and any other extension may subscribe. No registry or global state — the name is the contract.",
+  "comment3": "The \"action\" type invokes an app action by name: it looks up the handler pi registered on the focused editor's actionHandlers map and calls it directly — no keybinding lookup, so it works even if the action is unbound or rebound. See ctrl+x m/x/e/l/n below: model selector, copy, external editor, and session new/resume are all pi's own handlers, reused with zero duplication.",
 
-  "comment4": "timeout_ms: how long to wait for the next key before cancelling. Omit it for NO timeout — the modal waits until you pick a key, press escape, or ctrl+c.",
+  "comment4": "Handler names containing a ':' are event channels on pi.events (pi's shared extension event bus): modal_keybinds emits { ctx, pi } on that channel and any other extension may subscribe. No registry or global state — the name is the contract. Use this for things that are NOT app actions (e.g. undo/redo handled by the undo-redo extension); app actions go through the \"action\" type instead.",
 
-  "comment5": "Concrete consumer extensions subscribe to their own channels. E.g. the session-actions extension handles \"session-actions:new\" (like /new) and \"session-actions:resume\" (like /resume): bind them as { \"type\": \"handler\", \"name\": \"session-actions:new\" } — no registration or lookup table needed, the name is the channel.",
-
-  "comment6": "The \"action\" type invokes an app action by name: it looks up the handler pi registered on the focused editor's actionHandlers map and calls it directly — no keybinding lookup, so it works even if the action is unbound or rebound. app.editor.external is pi's open-external-editor action; ctrl+x e below reuses pi's existing handler with zero duplication. (The \"key\" type is the fallback for keys that aren't app actions, e.g. editor navigation chords.)",
+  "comment5": "timeout_ms: how long to wait for the next key before cancelling. Omit it for NO timeout — the modal waits until you pick a key, press escape, or ctrl+c.",
 
   "app.message.copy": ["ctrl+shift+x"],
 
@@ -18,16 +16,16 @@
 
     "bindings": {
       "ctrl+x": {
+        "m": { "type": "action", "name": "app.model.select", "label": "Switch model" },
+        "x": { "type": "action", "name": "app.message.copy", "label": "Copy last response" },
         "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" },
-        "l": { "type": "action", "name": "app.model.select", "label": "Switch model" },
+        "l": { "type": "action", "name": "app.session.resume", "label": "Resume session" },
+        "n": { "type": "action", "name": "app.session.new", "label": "New session" },
         "c": { "type": "compact", "label": "Compact conversation" },
-        "x": { "type": "copy", "label": "Copy last assistant message" },
         "y": { "type": "handler", "name": "some-extension:do-thing", "label": "External handler" },
-        "f": { "type": "message", "text": "Fix the latest errors in the code.", "label": "Fix errors" },
-        "s": { "type": "message", "text": "Summarize what changed in this session.", "label": "Summarize session" },
-        "e": { "type": "editorAppend", "text": "\n> ", "label": "Quote line" },
-        "n": { "type": "notify", "message": "hello from ctrl+x n", "label": "Test notification" },
         "d": { "type": "handler", "name": "toggleDemoWidget", "label": "Toggle demo widget" },
+        "f": { "type": "message", "text": "Fix the latest errors in the code.", "label": "Fix errors" },
+        "q": { "type": "editorAppend", "text": "\n> ", "label": "Quote line" },
         "g": {
           "b": { "type": "notify", "message": "ctrl+x g b", "label": "agb" },
           "r": { "type": "notify", "message": "ctrl+x g r", "label": "agr" }

@@ -20,8 +20,9 @@ Then `/reload` (or restart pi).
 
 Everything lives in the **same file as pi's own keybindings**:
 `~/.pi/agent/keybindings.json`. Put your modal bindings under a `"modal"` block —
-pi ignores it, the extension reads it. `"modal"` entries are deep-merged over the
-extension's built-in defaults, so you only need to list what you want to change.
+pi ignores it, the extension reads it. The extension ships with **no built-in
+bindings**: the modal menu shows exactly what you configure here (the empty
+built-in defaults still exist as a merge base, so old configs keep working).
 An annotated example lives in `keybindings.example.json`.
 
 ```json
@@ -177,8 +178,9 @@ Common actions the interactive mode registers: `app.model.select` (native model
 selector — search, provider filtering, editor text preserved), `app.message.copy`
 (copy last assistant message), `app.editor.external` (open external editor),
 `app.session.new` / `app.session.resume` / `app.session.tree` / `app.session.fork`,
-`app.thinking.toggle`, `app.tools.expand`, `app.model.cycleForward`. The built-in
-defaults bind `app.model.select`; anything else is one line in your config.
+`app.thinking.toggle`, `app.tools.expand`, `app.model.cycleForward`. Since there
+are no built-in bindings, wire any of these up in one line of config — the example
+file shows `m`/`x`/`e`/`l`/`n` bound to the common ones.
 (`compact` is the one thing that can't be an action — see the table above.)
 
 ### Replaying keys: the `key` action
@@ -226,22 +228,15 @@ your config into `keybindings.json` when convenient.
 
 ## Default bindings
 
-| Sequence        | Action                    |
-|-----------------|---------------------------|
-| `alt+x` `c`     | Compact conversation      |
-| `alt+x` `m`     | Open model selector (native `/model` via `action`) |
-| `alt+x` `e`     | Append newline to editor  |
-| `alt+x` `f`     | "Fix the latest errors."  |
-| `alt+x` `d`     | Toggle demo widget        |
-| `alt+x` `g` `b` | Notify "agb"              |
-| `alt+x` `g` `r` | Notify "agr"              |
-| `alt+x` `g` `s` | Paste "hello from …"      |
+**None.** The extension ships with an empty binding map — nothing is bound out of
+the box. The modal menu shows only the prefixes and keys you configure in
+`keybindings.json` (or the legacy file). `keybindings.example.json` has a fully
+annotated example to copy from.
 
 ## Testing
 
-Run pi and press `alt+x` then `c`. The menu widget should appear above the editor
-listing `C compact · M switch model …`, and `c` should start a compaction. To try
-`ctrl+x`, add the `"ctrl+x"` prefix from the example above and `/reload` (the
-`app.message.copy` rebind is optional). No startup warning should appear, and in a
-`/scoped-models` selector `ctrl+x` should still clear the model list instead of
-opening the modal.
+Run pi, add a prefix from `keybindings.example.json` (or your own) and `/reload`.
+The menu widget should appear above the editor listing the configured keys, and a
+second key should run the bound action. No startup warning should appear, and in a
+`/scoped-models` selector a prefix like `ctrl+x` should still clear the model list
+instead of opening the modal.

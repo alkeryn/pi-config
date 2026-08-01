@@ -30,13 +30,13 @@
           "label": "Redo last message"
         },
         "l": {
-          "type": "handler",
-          "name": "session-actions:resume",
+          "type": "action",
+          "name": "app.session.resume",
           "label": "Resume session"
         },
         "n": {
-          "type": "handler",
-          "name": "session-actions:new",
+          "type": "action",
+          "name": "app.session.new",
           "label": "New session"
         },
         "e": {

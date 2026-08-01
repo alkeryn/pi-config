@@ -5,7 +5,8 @@
  * emacs key chords or vim leader keys. Any depth is supported (`alt+x` `g` `b`).
  *
  * Configuration (later sources win, merged per prefix):
- *  1. built-in defaults below,
+ *  1. built-in defaults (none — the extension ships with an empty binding
+ *     map, so only what you configure below is active),
  *  2. legacy `~/.pi/agent/modal_keybinds.json`,
  *  3. the `"modal"` block inside `~/.pi/agent/keybindings.json` (recommended):
  *
@@ -97,7 +98,7 @@ export type CustomHandler = (ctx: ExtensionContext, pi: ExtensionAPI) => void | 
 // Custom handlers (extend this registry to add JS actions)
 // ---------------------------------------------------------------------------
 
-export const handlers: Record<string, CustomHandler> = {
+	export const handlers: Record<string, CustomHandler> = {
 	/** Demo: flip the `editor` and `compact` example widgets shown above the editor. */
 	toggleDemoWidget: (ctx) => {
 		const key = "modal_keybinds_demo";
@@ -105,7 +106,7 @@ export const handlers: Record<string, CustomHandler> = {
 			ctx.ui.setWidget(key, undefined);
 			ctx.ui.notify("modal_keybinds: demo widget cleared", "info");
 		} else {
-			ctx.ui.setWidget(key, ["demo widget from handler action", "try `alt+x` `d` again to clear it"]);
+			ctx.ui.setWidget(key, ["demo widget from handler action", "try the demo binding again to clear it"]);
 			ctx.ui.notify("modal_keybinds: demo widget shown", "info");
 		}
 	},
@@ -116,25 +117,10 @@ export const handlers: Record<string, CustomHandler> = {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONFIG: ModalConfig = {
-	bindings: {
-		// Default prefixes use `alt+x` / `alt+g` so they don't shadow common
-		// editor chords out of the box. Any key works as a prefix — prefixes
-		// only fire while the input editor is focused; in selectors/overlays
-		// the key passes through untouched.
-		"alt+x": {
-			c: { type: "compact", label: "Compact conversation" },
-			m: { type: "action", name: "app.model.select", label: "Switch model" },
-			e: { type: "editorAppend", text: "\n", label: "Append newline" },
-			f: { type: "message", text: "Fix the latest errors in the code.", label: "Fix errors" },
-			d: { type: "handler", name: "toggleDemoWidget", label: "Toggle demo widget" },
-			// Nested chain: alt+x, then g, then b/r/s.
-			g: {
-				b: { type: "notify", message: "you pressed alt+x g b", label: "agb" },
-				r: { type: "notify", message: "you pressed alt+x g r", label: "agr" },
-				s: { type: "paste", text: "hello from alt+x g s", label: "Paste hello" },
-			},
-		},
-	},
+	// No built-in bindings: only what you add to keybindings.json's "modal"
+	// block (or the legacy modal_keybinds.json) is active. DEFAULT_CONFIG is
+	// just the merge base — an empty map means your config IS the whole modal.
+	bindings: {},
 };
 
 // ---------------------------------------------------------------------------
