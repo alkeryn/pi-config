@@ -39,8 +39,8 @@
  *    warnings and no built-in key is "reserved" from modal prefixes.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { ModelSelectorComponent, copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Editor, Text, isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
@@ -176,7 +176,7 @@ function actionDetail(a: Action): string {
 		case "compact":
 			return "compact conversation";
 		case "model":
-			return "pick a model";
+			return "open model selector (native /model)";
 		case "copy":
 			return "copy last assistant message";
 		case "handler":
@@ -439,7 +439,7 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 			return;
 		}
 		case "model": {
-			await pickModel(ctx, pi);
+			await showNativeModelSelector(ctx, pi);
 			return;
 		}
 		case "copy": {
@@ -476,24 +476,54 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 	}
 }
 
-async function pickModel(ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
-	const models = ctx.modelRegistry.getAvailable();
-	if (models.length === 0) {
-		ctx.ui.notify("modal_keybinds: no models available", "warning");
-		return;
-	}
-	const current = ctx.model;
-	const labels = models.map((m) => {
-		const name = typeof m.name === "string" ? m.name : m.id;
-		const suffix = m.id === current?.id && m.provider === current.provider ? " ✓" : "";
-		return `${name} (${m.provider}/${m.id})${suffix}`;
+/**
+ * Open pi's native model selector — the exact same component `/model` opens.
+ * Uses `ctx.ui.custom()`, which swaps the editor for the selector and restores
+ * the editor *with its text* when the selector closes, so anything typed before
+ * `ctrl+x` `m` is preserved.
+ */
+async function showNativeModelSelector(ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
+	// The component persists the chosen default via settingsManager; pi.setModel()
+	// already does that (auth check, session change, persistence), so a no-op
+	// stub is safe here.
+	const settingsManager = {
+		setDefaultModelAndProvider: () => {},
+	} as unknown as SettingsManager;
+	// Thin adapter: the component expects a ModelRuntime, extensions only get the
+	// synchronous ModelRegistry facade.
+	const modelRuntime = {
+		getAvailableSnapshot: () => ctx.modelRegistry.getAll(),
+		getModel: (provider: string, id: string) => ctx.modelRegistry.find(provider, id),
+		refresh: async (_opts?: { signal?: AbortSignal }) => {
+			await ctx.modelRegistry.refresh();
+			return { aborted: false, errors: new Map() };
+		},
+		getError: () => ctx.modelRegistry.getError(),
+	} as unknown as ModelRuntime;
+
+	await ctx.ui.custom<unknown>((tui, _theme, _keybindings, done) => {
+		const selector = new ModelSelectorComponent(
+			tui,
+			ctx.model,
+			settingsManager,
+			modelRuntime,
+			ctx.scopedModels,
+			async (model) => {
+				try {
+					await pi.setModel(model);
+					done(undefined);
+				} catch (err) {
+					done(undefined);
+					ctx.ui.notify(
+						`modal_keybinds: ${err instanceof Error ? err.message : String(err)}`,
+						"error",
+					);
+				}
+			},
+			() => done(undefined),
+		);
+		return selector;
 	});
-	const choice = await ctx.ui.select("Switch model:", labels);
-	if (!choice) return;
-	const idx = labels.indexOf(choice);
-	if (idx === -1) return;
-	const ok = await pi.setModel(models[idx]!);
-	if (!ok) ctx.ui.notify("modal_keybinds: could not switch model (missing API key?)", "error");
 }
 
 // ---------------------------------------------------------------------------

@@ -111,7 +111,7 @@ accept the cosmetic startup warning, or rebind the colliding built-in
 | `editorPrepend`   | `text`             | Prepend to editor content                                  |
 | `paste`           | `text`             | Paste into editor (with paste handling)                    |
 | `compact`         | —                  | Compact the conversation (`ctx.compact()`)                 |
-| `model`           | —                  | Open a model picker and switch (`ctx.ui.select` + `setModel`) |
+| `model`           | —                  | Open pi's **native** model selector (the same component `/model` opens, rendered via `ctx.ui.custom()`) — with search, provider filtering and model switching. Your editor text is **preserved** while the selector is open and restored when it closes |
 | `copy`            | —                  | Copy the last assistant message (like pi's `app.message.copy`) |
 | `handler`         | `name`             | Run a JS handler registered in `handlers` (see below)      |
 
@@ -159,16 +159,18 @@ your config into `keybindings.json` when convenient.
 - Unmatched keys are consumed (they don't leak into the editor) — you stay in the
   chain until you pick a valid key, cancel, or the `timeoutMs` elapses.
 - `/modal_keybinds` prints the currently configured prefixes and config source.
-- Slash commands can't be executed programmatically by pi's extension API, so to
-  bind a command use `{ "type": "editor", "text": "/compact" }` (pre-fills, press
-  Enter), or implement it as a `handler`.
+- Slash commands can't be invoked programmatically by pi's extension API, so for
+  most commands use `{ "type": "editor", "text": "/compact" }` (pre-fills, press
+  Enter). `model` is the exception: it renders pi's own `ModelSelectorComponent`
+  directly (via `ctx.ui.custom()`), so you get the native selector with search and
+  provider filtering — and, unlike typing `/model`, your editor text is not lost.
 
 ## Default bindings
 
 | Sequence        | Action                    |
 |-----------------|---------------------------|
 | `alt+x` `c`     | Compact conversation      |
-| `alt+x` `m`     | Switch model (picker)     |
+| `alt+x` `m`     | Open model selector (native, editor text preserved) |
 | `alt+x` `e`     | Append newline to editor  |
 | `alt+x` `f`     | "Fix the latest errors."  |
 | `alt+x` `d`     | Toggle demo widget        |
