@@ -70,11 +70,13 @@ import { Editor, isKeyRelease, Key, matchesKey, Text, TUI, truncateToWidth, visi
 let patched = false;
 let tuiRef: TUI | undefined;
 let themeRef: { fg: (color: string, s: string) => string } | undefined;
-/** How many lines above the latest content the viewport is showing (0 = latest). */
-let scrollOffset = 0;
+/** True while the viewport is pinned to the latest content (default). */
+let atBottom = true;
 /** Height of the scrollable content area (rows minus bottom bar), from last render. */
 let pageSize = 20;
-/** Content length from the last render, used to keep a scrolled-back viewport anchored. */
+/** Absolute index (into the content region) of the first visible line while scrolled back. */
+let anchorStart = 0;
+/** Content length from the last render; used to clamp scroll input to the newest position. */
 let lastContentLength = 0;
 
 const ENTER_ALT_SCREEN = "\x1b[?1049h\x1b[?1007h";
@@ -296,14 +298,6 @@ function patchTuiRender(): void {
 		const contentLines = concat(parts.slice(0, editorIndex));
 		const barLines = concat(parts.slice(editorIndex));
 
-		// While scrolled back, appended content (LLM stream, tool output) must
-		// not push the viewport upward: shift the offset by the growth so the
-		// exact same conversation lines stay on screen.
-		if (scrollOffset > 0 && contentLines.length > lastContentLength) {
-			scrollOffset += contentLines.length - lastContentLength;
-		}
-		lastContentLength = contentLines.length;
-
 		const height = (this as any).terminal?.rows;
 		if (typeof height !== "number" || height <= 0) {
 			return [...contentLines, ...barLines];
@@ -312,8 +306,20 @@ function patchTuiRender(): void {
 		const available = Math.max(0, height - barLines.length);
 		pageSize = Math.max(1, available);
 		const maxOffset = Math.max(0, contentLines.length - available);
-		const offset = Math.min(Math.max(0, scrollOffset), maxOffset);
-		scrollOffset = offset; // write back the clamped value so PageDown responds immediately
+
+		// Anchored scrolling: while scrolled back, keep the exact same
+		// conversation lines on screen even when content or the bottom bar
+		// changes underneath (LLM stream, tool output, status/footer widgets
+		// appearing or disappearing — e.g. the working indicator that clears at
+		// the end of a turn). The view re-anchors only when the user scrolls;
+		// if the anchor ever reaches or falls past the newest content (e.g. it
+		// shrank, or there was nothing to scroll), it follows latest again.
+		if (atBottom || anchorStart >= contentLines.length - available) {
+			atBottom = true;
+			anchorStart = Math.max(0, contentLines.length - available);
+		}
+		const offset = Math.max(0, Math.min(contentLines.length - anchorStart - available, maxOffset));
+		lastContentLength = contentLines.length;
 
 		let visible: string[];
 		if (contentLines.length <= available) {
@@ -400,7 +406,16 @@ function onTerminalInput(data: string): { consume?: boolean; data?: string } | u
 	// wheel option is off.
 	if (config.wheel && (data === "\x1bOA" || data === "\x1bOB")) {
 		if (editorFocused) {
-			scrollOffset = Math.max(0, scrollOffset + (data === "\x1bOA" ? config.wheelStep : -config.wheelStep));
+			if (data === "\x1bOA") {
+				// Wheel up: scroll back toward older content.
+				if (atBottom) atBottom = false;
+				anchorStart = Math.max(0, anchorStart - config.wheelStep);
+			} else {
+				// Wheel down: scroll toward the latest content.
+				const latest = Math.max(0, lastContentLength - pageSize);
+				anchorStart = Math.min(anchorStart + config.wheelStep, latest);
+				if (anchorStart >= latest) atBottom = true;
+			}
 			tui.requestRender();
 			return { consume: true };
 		}
@@ -415,12 +430,15 @@ function onTerminalInput(data: string): { consume?: boolean; data?: string } | u
 
 	const pageStep = config.pageStep ?? pageSize;
 	if (matchesKey(data, Key.pageUp)) {
-		scrollOffset += pageStep;
+		if (atBottom) atBottom = false;
+		anchorStart = Math.max(0, anchorStart - pageStep);
 		tui.requestRender();
 		return { consume: true };
 	}
 	if (matchesKey(data, Key.pageDown)) {
-		scrollOffset = Math.max(0, scrollOffset - pageStep);
+		const latest = Math.max(0, lastContentLength - pageSize);
+		anchorStart = Math.min(anchorStart + pageStep, latest);
+		if (anchorStart >= latest) atBottom = true;
 		tui.requestRender();
 		return { consume: true };
 	}
@@ -428,20 +446,21 @@ function onTerminalInput(data: string): { consume?: boolean; data?: string } | u
 	// Plain Home/End are left to the editor (cursor to line start/end); these
 	// ctrl variants are unbound in pi's keybindings and free to consume.
 	if (matchesKey(data, Key.ctrl("home"))) {
-		scrollOffset = Number.MAX_SAFE_INTEGER;
+		atBottom = false;
+		anchorStart = 0;
 		tui.requestRender();
 		return { consume: true };
 	}
 	if (matchesKey(data, Key.ctrl("end"))) {
-		scrollOffset = 0;
+		atBottom = true;
 		tui.requestRender();
 		return { consume: true };
 	}
 	if (matchesKey(data, Key.enter)) {
 		// Sending a message: snap back to the latest view (don't consume —
 		// the editor still submits the message).
-		if (scrollOffset > 0) {
-			scrollOffset = 0;
+		if (!atBottom) {
+			atBottom = true;
 			tui.requestRender();
 		}
 	}
@@ -480,7 +499,9 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
 
-		scrollOffset = 0;
+		atBottom = true;
+		anchorStart = 0;
+		lastContentLength = 0;
 
 		// Zero-line widget: capture the TUI + theme for the scroll hint.
 		ctx.ui.setWidget("pin-bottom-capture", (tui, theme) => {
