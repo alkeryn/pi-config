@@ -8,15 +8,18 @@
  *   /redo — restores the leaf that was active before the last /undo.
  *
  * Cross-extension bridge:
- *   Registers `undo` and `redo` in the shared external-handler registry
- *   (globalThis.__piExtensionHandlers — the same registry modal_keybinds reads
- *   for `{ "type": "handler", "name": "…" }` actions), so keybindings.json can
- *   bind them:
+ *   Subscribes to the shared event bus channels `"undo-redo:undo"` and
+ *   `"undo-redo:redo"` (pi.events — the documented "Shared event bus for
+ *   extension communication"), so keybindings.json can bind them via
+ *   modal_keybinds' generic `handler` action — the name is the channel:
  *
  *     { "modal": { "bindings": { "ctrl+x": {
- *         "u": { "type": "handler", "name": "undo", "label": "Undo last message" },
- *         "r": { "type": "handler", "name": "redo", "label": "Redo last message" }
+ *         "u": { "type": "handler", "name": "undo-redo:undo", "label": "Undo last message" },
+ *         "r": { "type": "handler", "name": "undo-redo:redo", "label": "Redo last message" }
  *     } } } }
+ *
+ * modal_keybinds does not know this extension exists — it just emits `{ ctx, pi }`
+ * on the channel named in the config.
  *
  * Command-only privilege note: session tree navigation (ctx.navigateTree) is
  * only available in command contexts. When these handlers are invoked from a
@@ -30,23 +33,17 @@ import { Text } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 
 // ---------------------------------------------------------------------------
-// Shared cross-extension handler registry (also read by modal_keybinds)
-// ---------------------------------------------------------------------------
-
-export type ExternalHandler = (ctx: ExtensionContext, pi: ExtensionAPI) => void | Promise<void>;
-
-/** Well-known global registry: modal_keybinds resolves `handler` names here. */
-function getExternalRegistry(): Record<string, ExternalHandler> {
-	const g = globalThis as { __piExtensionHandlers?: Record<string, ExternalHandler> };
-	if (!g.__piExtensionHandlers) {
-		g.__piExtensionHandlers = {};
-	}
-	return g.__piExtensionHandlers;
-}
-
-// ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
+
+/**
+ * Subscribed event channels (pi.events). The names double as the `handler`
+ * names used in keybindings.json (e.g. `undo-redo:undo`).
+ */
+export type UndoRedoEvents = {
+	"undo-redo:undo": { ctx: ExtensionContext; pi: ExtensionAPI };
+	"undo-redo:redo": { ctx: ExtensionContext; pi: ExtensionAPI };
+};
 
 export default function (pi: ExtensionAPI): void {
 	// Leaf ids that can be restored via /redo, most recent first.
@@ -161,8 +158,14 @@ export default function (pi: ExtensionAPI): void {
 		runViaEditor(ctx, fn);
 	}
 
-	// Expose to other extensions (modal_keybinds) under the well-known names.
-	const registry = getExternalRegistry();
-	registry.undo = (ctx, pi) => handleExternal(ctx, pi, "undo");
-	registry.redo = (ctx, pi) => handleExternal(ctx, pi, "redo");
+	// Subscribe to the shared event bus so modal_keybinds' generic `handler`
+	// action can reach us: channels "undo-redo:undo" / "undo-redo:redo".
+	pi.events.on("undo-redo:undo", async (data) => {
+		const { ctx, pi: piArg } = data as UndoRedoEvents["undo-redo:undo"];
+		await handleExternal(ctx, piArg, "undo");
+	});
+	pi.events.on("undo-redo:redo", async (data) => {
+		const { ctx, pi: piArg } = data as UndoRedoEvents["undo-redo:redo"];
+		await handleExternal(ctx, piArg, "redo");
+	});
 }

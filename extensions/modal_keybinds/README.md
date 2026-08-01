@@ -113,7 +113,7 @@ accept the cosmetic startup warning, or rebind the colliding built-in
 | `compact`         | —                  | Compact the conversation (`ctx.compact()`)                 |
 | `model`           | —                  | Open pi's **native** model selector (the same component `/model` opens, rendered via `ctx.ui.custom()`) — with search, provider filtering and model switching. Your editor text is **preserved** while the selector is open and restored when it closes |
 | `copy`            | —                  | Copy the last assistant message (like pi's `app.message.copy`) |
-| `handler`         | `name`             | Run a JS handler — first this extension's `handlers` map, then the shared cross-extension registry (`globalThis.__piExtensionHandlers`), so other extensions (e.g. `undo-redo`) can expose callable functions |
+| `handler`         | `name`             | Run a JS handler — first this extension's `handlers` map, then emit `{ ctx, pi }` on `pi.events` channel `name` (e.g. `"undo-redo:undo"`), so other extensions can react without modal_keybinds knowing them |
 
 `label` is optional on any action and is shown in the modal menu widget.
 
@@ -139,28 +139,30 @@ do anything an extension can (`ctx.compact()`, `pi.setModel()`, `pi.sendUserMess
 `ctx.newSession()` / `ctx.fork()` / `ctx.reload()` are not available from a handler —
 route those through `message`/`editor` actions or an extension command instead.
 
-### External handlers (calling functions from other extensions)
+### Handler names: local map, or an event-bus channel
 
-If the name is not in this extension's `handlers` map, it is looked up in a shared
-cross-extension registry on `globalThis.__piExtensionHandlers`. Any extension can
-register callable functions there, and keybindings.json can invoke them with the
-same `handler` action:
+If the name is not in this extension's `handlers` map and contains a `:`, it is
+treated as an **event channel on `pi.events`** — pi's shared, documented event bus
+("Shared event bus for extension communication"). modal_keybinds emits `{ ctx, pi }`
+on that channel and any extension may subscribe. This keeps modal_keybinds
+completely unaware of which extension (if any) listens:
 
 ```json
 { "modal": { "bindings": { "ctrl+x": {
-  "u": { "type": "handler", "name": "undo", "label": "Undo last message" },
-  "r": { "type": "handler", "name": "redo", "label": "Redo last message" }
+  "u": { "type": "handler", "name": "undo-redo:undo", "label": "Undo last message" },
+  "r": { "type": "handler", "name": "undo-redo:redo", "label": "Redo last message" }
 } } } }
 ```
 
-The bundled **`undo-redo`** extension (install it alongside this one) registers
-`undo` and `redo` — `/undo` reverts to the last user message (same as selecting it
-in `/tree` without a summary), `/redo` restores the abandoned turn. From a modal
-keybind, undo/redo run the command through the editor submit path, so the session
-and chat stay fully in sync; if the editor holds a draft the key is ignored with a
-notification rather than clobbering it.
+The bundled **`undo-redo`** extension (install it alongside this one) subscribes to
+`"undo-redo:undo"` / `"undo-redo:redo"`: `/undo` reverts to the last user message
+(same as selecting it in `/tree` without a summary), `/redo` restores the abandoned
+turn. From a modal keybind, undo/redo run the command through the editor submit
+path, so the session and chat stay fully in sync; if the editor holds a draft the
+key is ignored with a notification rather than clobbering it.
 
-Resolution order: local `handlers` first, then the global registry.
+Note: `pi.events.emit` is fire-and-forget — if nothing subscribes to the channel,
+the key press silently does nothing (check for typos in the `name`).
 
 ## Legacy config
 

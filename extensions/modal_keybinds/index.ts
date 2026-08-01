@@ -72,22 +72,19 @@ export interface ModalConfig {
 export type CustomHandler = (ctx: ExtensionContext, pi: ExtensionAPI) => void | Promise<void>;
 
 /**
- * Shared cross-extension handler registry.
+ * Cross-extension handler dispatch via pi's shared event bus (`pi.events`).
  *
- * Other extensions register callable functions here (e.g. the `undo-redo`
- * extension registers `undo` and `redo`), and keybindings.json can invoke them
- * with `{ "type": "handler", "name": "undo" }`. Resolution order: this
- * extension's own `handlers` map first, then the global registry.
+ * A `handler` name containing a `:` is an event channel: modal_keybinds emits
+ * `{ ctx, pi }` on it and lets other extensions handle it. The `undo-redo`
+ * extension subscribes to `"undo-redo:undo"` / `"undo-redo:redo"`, so
+ * keybindings.json can call it with
+ * `{ "type": "handler", "name": "undo-redo:undo" }` — the name is literally
+ * the channel. modal_keybinds stays completely unaware of which extension (if
+ * any) listens; names without a colon are local handlers in `handlers`.
+ *
+ * Note: `pi.events.emit` is fire-and-forget — if nothing subscribes to a
+ * channel, the key press silently does nothing.
  */
-export type ExternalHandler = CustomHandler;
-
-function getExternalRegistry(): Record<string, ExternalHandler> {
-	const g = globalThis as { __piExtensionHandlers?: Record<string, ExternalHandler> };
-	if (!g.__piExtensionHandlers) {
-		g.__piExtensionHandlers = {};
-	}
-	return g.__piExtensionHandlers;
-}
 
 // ---------------------------------------------------------------------------
 // Custom handlers (extend this registry to add JS actions)
@@ -481,13 +478,17 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 		}
 		case "handler": {
 			const name = typeof a.name === "string" ? a.name : "";
-			// Local handlers first, then the shared registry (other extensions).
-			const handler = handlers[name] ?? getExternalRegistry()[name];
-			if (!handler) {
-				ctx.ui.notify(`${label}: unknown handler "${name}"`, "error");
+			// Local handler, or cross-extension dispatch on pi.events.
+			const local = handlers[name];
+			if (local) {
+				await local(ctx, pi);
 				return;
 			}
-			await handler(ctx, pi);
+			if (name.includes(":")) {
+				pi.events.emit(name, { ctx, pi });
+				return;
+			}
+			ctx.ui.notify(`${label}: unknown handler "${name}"`, "error");
 			return;
 		}
 		default:
