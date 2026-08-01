@@ -19,7 +19,13 @@
  *   Mouse wheel   scroll back/forward
  *   PageUp/PageDown  page-scroll (only while the editor is focused;
  *                    default = full viewport; set page_step to change)
+ *   Ctrl+Home     jump to the top (beginning) of the chat
+ *   Ctrl+End      jump to the latest (bottom) message
  *   Enter         while scrolled back, sending a message jumps back to latest
+ *
+ * While you are scrolled back, newly appended text (the LLM stream, tool
+ * output) no longer pushes the viewport upward: the view stays anchored to
+ * the same conversation lines until you scroll again.
  *
  * When the chat is shorter than the screen, the bar sits at the bottom with
  * blank filler between it and the content. When the chat is long, the viewport
@@ -68,6 +74,8 @@ let themeRef: { fg: (color: string, s: string) => string } | undefined;
 let scrollOffset = 0;
 /** Height of the scrollable content area (rows minus bottom bar), from last render. */
 let pageSize = 20;
+/** Content length from the last render, used to keep a scrolled-back viewport anchored. */
+let lastContentLength = 0;
 
 const ENTER_ALT_SCREEN = "\x1b[?1049h\x1b[?1007h";
 const LEAVE_ALT_SCREEN = "\x1b[?1049l\x1b[?1007l";
@@ -288,6 +296,14 @@ function patchTuiRender(): void {
 		const contentLines = concat(parts.slice(0, editorIndex));
 		const barLines = concat(parts.slice(editorIndex));
 
+		// While scrolled back, appended content (LLM stream, tool output) must
+		// not push the viewport upward: shift the offset by the growth so the
+		// exact same conversation lines stay on screen.
+		if (scrollOffset > 0 && contentLines.length > lastContentLength) {
+			scrollOffset += contentLines.length - lastContentLength;
+		}
+		lastContentLength = contentLines.length;
+
 		const height = (this as any).terminal?.rows;
 		if (typeof height !== "number" || height <= 0) {
 			return [...contentLines, ...barLines];
@@ -320,8 +336,8 @@ function patchTuiRender(): void {
 		// When scrolled back, replace the top content line with a return hint.
 		if (offset > 0 && visible.length > 0) {
 			const hintText = config.wheel
-				? "↑ scrolled · scroll down / PageDown to return to latest"
-				: "↑ scrolled · PageDown to return to latest";
+				? "↑ scrolled · Ctrl+Home top · Ctrl+End/scroll↓ latest"
+				: "↑ scrolled · Ctrl+Home top · Ctrl+End/PageDown latest";
 			const hint = truncateToWidth(themeRef ? themeRef.fg("dim", hintText) : hintText, width);
 			out[0] = hint;
 		}
@@ -408,6 +424,19 @@ function onTerminalInput(data: string): { consume?: boolean; data?: string } | u
 		tui.requestRender();
 		return { consume: true };
 	}
+	// Ctrl+Home / Ctrl+End — jump to the beginning / latest of the chat.
+	// Plain Home/End are left to the editor (cursor to line start/end); these
+	// ctrl variants are unbound in pi's keybindings and free to consume.
+	if (matchesKey(data, Key.ctrl("home"))) {
+		scrollOffset = Number.MAX_SAFE_INTEGER;
+		tui.requestRender();
+		return { consume: true };
+	}
+	if (matchesKey(data, Key.ctrl("end"))) {
+		scrollOffset = 0;
+		tui.requestRender();
+		return { consume: true };
+	}
 	if (matchesKey(data, Key.enter)) {
 		// Sending a message: snap back to the latest view (don't consume —
 		// the editor still submits the message).
@@ -444,7 +473,7 @@ export default function (pi: ExtensionAPI): void {
 			const how =
 				"config: settings.json → \"pin_bottom\": { wheel, wheel_step, page_step } (camelCase legacy also accepted) · env: PI_PIN_BOTTOM_WHEEL, PI_PIN_BOTTOM_WHEEL_STEP, PI_PIN_BOTTOM_PAGE_STEP";
 			const pageStatus = config.pageStep ? `${config.pageStep} line(s)` : "full-page";
-			ctx.ui.notify(`${wheelStatus} · PageUp/PageDown ${pageStatus} scroll · arrows = editor history · ${how}`, "info");
+			ctx.ui.notify(`${wheelStatus} · PageUp/PageDown ${pageStatus} scroll · Ctrl+Home top · Ctrl+End latest · arrows = editor history · ${how}`, "info");
 		},
 	});
 
