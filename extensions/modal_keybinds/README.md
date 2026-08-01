@@ -94,6 +94,7 @@ The extension checks your prefixes at load time and warns (with a concrete
 | `paste`           | `text`             | Paste into editor (with paste handling)                    |
 | `compact`         | —                  | Compact the conversation (`ctx.compact()`)                 |
 | `model`           | —                  | Open a model picker and switch (`ctx.ui.select` + `setModel`) |
+| `copy`            | —                  | Copy the last assistant message (like pi's `app.message.copy`) |
 | `handler`         | `name`             | Run a JS handler registered in `handlers` (see below)      |
 
 `label` is optional on any action and is shown in the modal menu widget.
@@ -131,6 +132,9 @@ your config into `keybindings.json` when convenient.
 
 - While a prefix is waiting for the second key, a menu widget is shown above the
   editor listing the available keys, plus a footer status. `esc`/`ctrl+c` cancels.
+- Key release/repeat events are ignored while waiting: the next key must be a
+  genuine fresh press (so `ctrl+x`, releasing ctrl, then releasing `x` doesn't
+  false-trigger an `x` binding — press `x` again to fire it).
 - Unmatched keys are consumed (they don't leak into the editor) — you stay in the
   chain until you pick a valid key, cancel, or the `timeoutMs` elapses.
 - `/modal_keybinds` prints the currently configured prefixes and config source.

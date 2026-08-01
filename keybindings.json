@@ -1,0 +1,14 @@
+{
+  "app.message.copy": ["ctrl+shift+x"],
+
+  "modal": {
+    "timeoutMs": 5000,
+    "bindings": {
+      "ctrl+x": {
+        "c": { "type": "compact", "label": "Compact conversation" },
+        "m": { "type": "model", "label": "Switch model" },
+        "x": { "type": "copy", "label": "Copy last assistant message" }
+      }
+    }
+  }
+}

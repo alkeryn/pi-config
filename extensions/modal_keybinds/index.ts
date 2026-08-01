@@ -35,8 +35,8 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { matchesKey } from "@earendil-works/pi-tui";
+import { copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -124,6 +124,7 @@ const KNOWN_ACTION_TYPES = new Set([
 	"paste",
 	"compact",
 	"model",
+	"copy",
 	"handler",
 ]);
 
@@ -137,6 +138,18 @@ function isBindingMap(b: Binding): b is { [key: string]: Binding } {
 
 function truncate(s: string, n: number): string {
 	return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+/** Extract plain text from a message's content parts. */
+function messageText(message: { role: string; content?: unknown }): string {
+	if (!Array.isArray(message.content)) return "";
+	return message.content
+		.filter(
+			(p): p is { type: "text"; text: string } =>
+				isPlainObject(p) && p.type === "text" && typeof p.text === "string",
+		)
+		.map((p) => p.text)
+		.join("\n");
 }
 
 /** Render a key id for the menu widget: `l` → `L`, keep chords as-is. */
@@ -159,6 +172,8 @@ function actionDetail(a: Action): string {
 			return "compact conversation";
 		case "model":
 			return "pick a model";
+		case "copy":
+			return "copy last assistant message";
 		case "handler":
 			return typeof a.name === "string" ? `handler: ${a.name}` : "";
 		default:
@@ -408,6 +423,12 @@ function enterModal(
 	timer = setTimeout(() => close(`modal keybinds: ${seq} timed out`), timeoutMs);
 
 	unsub = ctx.ui.onTerminalInput((data) => {
+		// With the kitty keyboard protocol (flag 2) pi reports key release and
+		// repeat events. Releasing the prefix's modifier before its key (e.g.
+		// `ctrl+x` → release ctrl → release x) would otherwise make the bare `x`
+		// RELEASE false-match an "x" binding — so ignore releases/repeats and
+		// only accept a genuine fresh press as the next key.
+		if (isKeyRelease(data) || isKeyRepeat(data)) return { consume: true };
 		// Cancel: escape / ctrl+c
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 			close();
@@ -478,6 +499,25 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 		}
 		case "model": {
 			await pickModel(ctx, pi);
+			return;
+		}
+		case "copy": {
+			// Replicates pi's built-in `app.message.copy` (last assistant message).
+			let text = "";
+			const branch = ctx.sessionManager.getBranch();
+			for (let i = branch.length - 1; i >= 0; i--) {
+				const entry = branch[i];
+				if (entry?.type === "message" && entry.message?.role === "assistant") {
+					text = messageText(entry.message);
+					break;
+				}
+			}
+			if (!text) {
+				ctx.ui.notify(`${label}: no assistant message to copy`, "warning");
+				return;
+			}
+			await copyToClipboard(text);
+			ctx.ui.notify(`${label}: copied ${truncate(text, 40)}`, "info");
 			return;
 		}
 		case "handler": {
