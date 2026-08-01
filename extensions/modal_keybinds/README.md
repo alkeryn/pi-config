@@ -29,7 +29,7 @@ An annotated example lives in `keybindings.example.json`.
   "app.message.copy": ["ctrl+shift+x"],
 
   "modal": {
-    "timeoutMs": 7000,
+    "timeout_ms": 7000,
     "bindings": {
       "ctrl+x": {
         "c": { "type": "compact", "label": "Compact conversation" },
@@ -58,7 +58,7 @@ the editor, or drop it if you don't need copy.
 
 | Option                | Effect                                                        |
 |-----------------------|---------------------------------------------------------------|
-| `modal.timeoutMs`     | How long to wait for the next key before cancelling (default 5000) |
+| `modal.timeout_ms`    | How long to wait for the next key before cancelling. **Omitted = no timeout** (waits until a key, `escape`, or `ctrl+c`) |
 | `modal.bindings`      | `prefix keyId` → map of second-level `keyId` → binding        |
 
 ### Key ids
@@ -179,7 +179,7 @@ your config into `keybindings.json` when convenient.
   genuine fresh press (so `ctrl+x`, releasing ctrl, then releasing `x` doesn't
   false-trigger an `x` binding — press `x` again to fire it).
 - Unmatched keys are consumed (they don't leak into the editor) — you stay in the
-  chain until you pick a valid key, cancel, or the `timeoutMs` elapses.
+  chain until you pick a valid key, cancel, or the `timeout_ms` elapses (if set).
 - `/modal_keybinds` prints the currently configured prefixes and config source.
 - Slash commands can't be invoked programmatically by pi's extension API, so for
   most commands use `{ "type": "editor", "text": "/compact" }` (pre-fills, press

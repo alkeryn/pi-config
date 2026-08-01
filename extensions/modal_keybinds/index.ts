@@ -12,7 +12,7 @@
  *     {
  *       "app.message.copy": ["ctrl+shift+x"],   // optional: moves copy off ctrl+x
  *       "modal": {
- *         "timeoutMs": 7000,
+ *         "timeout_ms": 7000,   // omitted = no timeout (modal waits forever)
  *         "bindings": {
  *           "ctrl+x": {
  *             "c": { "type": "compact", "label": "Compact conversation" },
@@ -34,7 +34,8 @@
  *    listener grabs the *next* key. `matchesKey` from pi-tui is used to match
  *    the raw input against configured key ids.
  *  - On a match the action executes (or the chain descends one level), on
- *    `escape`/`ctrl+c` the sequence is cancelled, and a timeout auto-cancels.
+ *    `escape`/`ctrl+c` the sequence is cancelled, and if `timeout_ms` is set
+ *    the sequence auto-cancels once it elapses.
  *  - No `pi.registerShortcut` is used, so pi never emits shortcut-conflict
  *    warnings and no built-in key is "reserved" from modal prefixes.
  */
@@ -63,7 +64,7 @@ export type Binding = Action | { [key: string]: Binding };
 
 export interface ModalConfig {
 	/** How long to wait for the next key before cancelling. Default 5000. */
-	timeoutMs?: number;
+	timeout_ms?: number;
 	/** prefix keyId → map of second-level keyId → binding. */
 	bindings?: { [prefix: string]: Binding };
 }
@@ -107,7 +108,6 @@ export const handlers: Record<string, CustomHandler> = {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONFIG: ModalConfig = {
-	timeoutMs: 5000,
 	bindings: {
 		// Default prefixes use `alt+x` / `alt+g` so they don't shadow common
 		// editor chords out of the box. Any key works as a prefix — prefixes
@@ -293,13 +293,14 @@ function loadConfig(): { config: ModalConfig; userKeybindings: Record<string, un
 	const legacy = (readJsonFile(join(getAgentDir(), "modal_keybinds.json")) as ModalConfig | undefined) ?? {};
 
 	const bindings = deepMerge(deepMerge(DEFAULT_CONFIG.bindings ?? {}, legacy.bindings ?? {}), kbBlock.bindings ?? {});
-	const timeoutMs =
-		typeof kbBlock.timeoutMs === "number"
-			? kbBlock.timeoutMs
-			: typeof legacy.timeoutMs === "number"
-				? legacy.timeoutMs
-				: DEFAULT_CONFIG.timeoutMs;
-	return { config: { timeoutMs, bindings }, userKeybindings };
+	// Omitted timeout_ms = no timeout (the modal waits for a key indefinitely).
+	const timeout_ms =
+		typeof kbBlock.timeout_ms === "number"
+			? kbBlock.timeout_ms
+			: typeof legacy.timeout_ms === "number"
+				? legacy.timeout_ms
+				: undefined;
+	return { config: { timeout_ms, bindings }, userKeybindings };
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +345,7 @@ function enterModal(
 	bindings: { [key: string]: Binding },
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
-	timeoutMs: number,
+	timeoutMs?: number,
 	onActiveChange: (close: (() => void) | undefined) => void,
 ): void {
 	const seq = path.join(" → ");
@@ -374,7 +375,11 @@ function enterModal(
 	onActiveChange(() => close());
 
 	// --- wait for the next key -------------------------------------------------
-	timer = setTimeout(() => close(`modal keybinds: ${seq} timed out`), timeoutMs);
+	// A timeout_ms is optional — without one the modal stays open until the
+	// next key, escape, or ctrl+c.
+	if (timeoutMs !== undefined) {
+		timer = setTimeout(() => close(`modal keybinds: ${seq} timed out`), timeoutMs);
+	}
 
 	unsub = ctx.ui.onTerminalInput((data) => {
 		// With the kitty keyboard protocol (flag 2) pi reports key release and
@@ -552,7 +557,7 @@ export default function (pi: ExtensionAPI): void {
 	const { config } = loadConfig();
 	// Drop invalid keys (typos, stray JSON comments) before registering.
 	const bindings = sanitizeBindings(config.bindings ?? {}, "<root>");
-	const timeoutMs = config.timeoutMs ?? 5000;
+	const timeoutMs = config.timeout_ms; // undefined = no timeout
 
 	if (!validateConfig(bindings)) {
 		console.warn("modal_keybinds: config has errors; loading valid prefixes only.");

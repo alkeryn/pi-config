@@ -2,7 +2,6 @@
   "app.message.copy": ["ctrl+shift+x"],
 
   "modal": {
-    "timeoutMs": 5000,
     "bindings": {
       "ctrl+x": {
         "c": { "type": "compact", "label": "Compact conversation" },

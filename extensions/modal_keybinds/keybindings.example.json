@@ -5,10 +5,12 @@
 
   "comment3": "Handler names containing a ':' are event channels on pi.events (pi's shared extension event bus): modal_keybinds emits { ctx, pi } on that channel and any other extension may subscribe. No registry or global state — the name is the contract.",
 
+  "comment4": "timeout_ms: how long to wait for the next key before cancelling. Omit it for NO timeout — the modal waits until you pick a key, press escape, or ctrl+c.",
+
   "app.message.copy": ["ctrl+shift+x"],
 
   "modal": {
-    "timeoutMs": 7000,
+    "timeout_ms": 7000,
 
     "bindings": {
       "ctrl+x": {
