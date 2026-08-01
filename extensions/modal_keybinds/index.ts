@@ -10,7 +10,7 @@
  *  3. the `"modal"` block inside `~/.pi/agent/keybindings.json` (recommended):
  *
  *     {
- *       "app.message.copy": ["ctrl+shift+x"],   // frees ctrl+x for the prefix
+ *       "app.message.copy": ["ctrl+shift+x"],   // optional: moves copy off ctrl+x
  *       "modal": {
  *         "timeoutMs": 7000,
  *         "bindings": {
@@ -26,17 +26,23 @@
  * `"modal"` block is inert as far as pi's own keybinding engine is concerned.
  *
  * How it works:
- *  - A shortcut is registered for every first-level prefix key (e.g. `ctrl+x`).
- *  - When the prefix fires, a small menu widget is shown above the editor and a
- *    terminal input listener grabs the *next* key. `matchesKey` from pi-tui is
- *    used to match the raw input against configured key ids.
+ *  - A single TUI-level input listener watches for first-level prefix keys
+ *    (e.g. `ctrl+x`) — but only while the input editor is focused. When focus
+ *    is elsewhere (selectors like `/scoped-models`, overlays) the key passes
+ *    through untouched, so `ctrl+x` keeps its native meaning there ("clear").
+ *  - When a prefix fires, a small menu widget is shown above the editor and the
+ *    listener grabs the *next* key. `matchesKey` from pi-tui is used to match
+ *    the raw input against configured key ids.
  *  - On a match the action executes (or the chain descends one level), on
  *    `escape`/`ctrl+c` the sequence is cancelled, and a timeout auto-cancels.
+ *  - No `pi.registerShortcut` is used, so pi never emits shortcut-conflict
+ *    warnings and no built-in key is "reserved" from modal prefixes.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
+import { Editor, Text, isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -90,11 +96,10 @@ export const handlers: Record<string, CustomHandler> = {
 const DEFAULT_CONFIG: ModalConfig = {
 	timeoutMs: 5000,
 	bindings: {
-		// Default prefixes use keys with no built-in binding (`alt+x`, `alt+g`)
-		// so they work out of the box. pi reserves several built-in keys
-		// (`app.message.copy` = ctrl+x, `app.editor.external` = ctrl+g, …) and
-		// silently skips extension shortcuts that collide with them unless you
-		// rebind the built-in first — see README.md "Reserved keys".
+		// Default prefixes use `alt+x` / `alt+g` so they don't shadow common
+		// editor chords out of the box. Any key works as a prefix — prefixes
+		// only fire while the input editor is focused; in selectors/overlays
+		// the key passes through untouched.
 		"alt+x": {
 			c: { type: "compact", label: "Compact conversation" },
 			m: { type: "model", label: "Switch model" },
@@ -285,72 +290,8 @@ function loadConfig(): { config: ModalConfig; userKeybindings: Record<string, un
 }
 
 // ---------------------------------------------------------------------------
-// Reserved built-in keybindings
+// Config validation
 // ---------------------------------------------------------------------------
-
-/**
- * Built-in keybindings pi reserves from extension shortcuts (mirrors pi's
- * RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS): an extension shortcut on one
- * of these keys is silently skipped unless the user rebinds the built-in in
- * keybindings.json first.
- */
-const RESERVED_BUILTIN_DEFAULT_KEYS: Record<string, string[]> = {
-	"app.interrupt": ["escape"],
-	"app.clear": ["ctrl+c"],
-	"app.exit": ["ctrl+d"],
-	"app.suspend": ["ctrl+z"],
-	"app.thinking.cycle": ["shift+tab"],
-	"app.model.cycleForward": ["ctrl+p"],
-	"app.model.cycleBackward": ["shift+ctrl+p"],
-	"app.model.select": ["ctrl+l"],
-	"app.tools.expand": ["ctrl+o"],
-	"app.thinking.toggle": ["ctrl+t"],
-	"app.editor.external": ["ctrl+g"],
-	"app.message.copy": ["ctrl+x"],
-	"app.message.followUp": ["alt+enter"],
-	"tui.input.submit": ["enter"],
-	"tui.select.confirm": ["enter"],
-	"tui.select.cancel": ["escape", "ctrl+c"],
-	"tui.input.copy": ["ctrl+c"],
-	"tui.editor.deleteToLineEnd": ["ctrl+k"],
-};
-
-/** Resolved keys for a reserved id: user override from keybindings.json, else default. */
-function resolvedReservedKeys(id: string, userKeybindings: Record<string, unknown>): string[] {
-	const v = userKeybindings[id];
-	if (typeof v === "string") return [v];
-	if (Array.isArray(v) && v.every((e) => typeof e === "string")) return v as string[];
-	return RESERVED_BUILTIN_DEFAULT_KEYS[id] ?? [];
-}
-
-/** Suggest an alternative key for a conflict hint, e.g. `ctrl+x` -> `ctrl+shift+x`. */
-function suggestAlternative(key: string): string {
-	const base = key.split("+").pop() ?? "x";
-	return /^[a-z0-9]$/.test(base) ? `ctrl+shift+${base}` : `alt+${base}`;
-}
-
-/**
- * Warn when a modal prefix key is still bound to a reserved built-in action:
- * pi would silently skip that prefix's shortcut. The fix is a keybindings.json
- * entry moving the built-in off the key.
- */
-function checkReservedConflicts(bindings: { [key: string]: Binding }, userKeybindings: Record<string, unknown>): void {
-	for (const prefix of Object.keys(bindings)) {
-		const prefixKey = prefix.toLowerCase();
-		for (const [id, defaultKeys] of Object.entries(RESERVED_BUILTIN_DEFAULT_KEYS)) {
-			const resolved = resolvedReservedKeys(id, userKeybindings);
-			if (!resolved.some((k) => k.toLowerCase() === prefixKey)) continue;
-			const suggestion = resolved.map(suggestAlternative).join(" / ");
-			console.warn(
-				`modal_keybinds: prefix "${prefix}" is also the built-in keybinding "${id}" (${resolved.join(" / ")}). ` +
-					`pi will skip this prefix's shortcut unless you rebind the built-in in keybindings.json, ` +
-					`e.g. { "${id}": ["${suggestion}"] }.`,
-			);
-		}
-	}
-}
-
-/** Validate the config shape; warn on issues. Returns true when valid. */
 function validateConfig(bindings: { [prefix: string]: Binding }): boolean {
 	let ok = true;
 	const check = (b: Binding, path: string): void => {
@@ -560,7 +501,7 @@ async function pickModel(ctx: ExtensionContext, pi: ExtensionAPI): Promise<void>
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI): void {
-	const { config, userKeybindings } = loadConfig();
+	const { config } = loadConfig();
 	// Drop invalid keys (typos, stray JSON comments) before registering.
 	const bindings = sanitizeBindings(config.bindings ?? {}, "<root>");
 	const timeoutMs = config.timeoutMs ?? 5000;
@@ -568,7 +509,6 @@ export default function (pi: ExtensionAPI): void {
 	if (!validateConfig(bindings)) {
 		console.warn("modal_keybinds: config has errors; loading valid prefixes only.");
 	}
-	checkReservedConflicts(bindings, userKeybindings);
 
 	// Track the currently active modal so we can cancel it on shutdown/reload.
 	let activeClose: (() => void) | undefined;
@@ -576,24 +516,66 @@ export default function (pi: ExtensionAPI): void {
 		activeClose = close;
 	};
 
+	// The TUI is captured lazily from an (invisible) widget factory — an empty
+	// Text renders zero lines. It is used to check which component has focus.
+	let tuiRef: TUI | undefined;
+
+	// The single TUI-level input listener that owns every prefix key.
+	//
+	// It replaces `pi.registerShortcut`: because no shortcut is registered, pi
+	// has nothing to flag in its conflict check, so no "Extension shortcut
+	// conflict" warning appears at startup. And because prefixes only fire while
+	// the input editor is focused, keys keep their native meaning anywhere else
+	// (e.g. `/scoped-models` keeps its own `ctrl+x` "clear").
+	let currentCtx: ExtensionContext | undefined;
+	let outerUnsub: (() => void) | undefined;
+	const teardownOuter = (): void => {
+		outerUnsub?.();
+		outerUnsub = undefined;
+		currentCtx = undefined;
+	};
+
+	const onGlobalInput = (data: string) => {
+		try {
+			// While a modal is waiting, the inner listener registered by
+			// enterModal owns every key — pass everything to it without
+			// consuming, including releases/repeats (it filters those itself).
+			if (activeClose) return { consume: false };
+			// Key release/repeat events can never start a modal; let them be.
+			if (isKeyRelease(data) || isKeyRepeat(data)) return { consume: false };
+			// Only intercept prefix presses while the input editor is focused.
+			if (!(tuiRef?.focusedComponent instanceof Editor)) return { consume: false };
+			for (const [prefixKey, subBindings] of Object.entries(bindings)) {
+				if (!isBindingMap(subBindings)) continue; // already warned in validateConfig
+				if (matchesKey(data, prefixKey) && currentCtx) {
+					enterModal([prefixKey], subBindings, currentCtx, pi, timeoutMs, setActive);
+					return { consume: true };
+				}
+			}
+			return { consume: false };
+		} catch {
+			// Never break terminal input: let the key through on any error.
+			return { consume: false };
+		}
+	};
+
+	// The listener holds the ctx of the session that registered it; contexts go
+	// stale when the session is replaced, so (re)register it per session.
 	pi.on("session_shutdown", () => {
 		activeClose?.();
 		setActive(undefined);
+		teardownOuter();
 	});
 
-	for (const [prefixKey, subBindings] of Object.entries(bindings)) {
-		if (!isBindingMap(subBindings)) continue; // already warned in validateConfig
-		pi.registerShortcut(prefixKey, {
-			description: `modal_keybinds: ${prefixKey} prefix (${Object.keys(subBindings).length} bindings)`,
-			handler: (ctx) => {
-				if (ctx.mode !== "tui" || !ctx.hasUI) {
-					ctx.ui.notify(`modal_keybinds: ${prefixKey} requires TUI mode`, "warning");
-					return;
-				}
-				enterModal([prefixKey], subBindings, ctx, pi, timeoutMs, setActive);
-			},
+	pi.on("session_start", (_event, ctx) => {
+		teardownOuter(); // replace the previous session's listener
+		currentCtx = ctx;
+		ctx.ui.setWidget("modal_keybinds_tui", (tui) => {
+			tuiRef = tui;
+			return new Text("");
 		});
-	}
+		outerUnsub = ctx.ui.onTerminalInput(onGlobalInput);
+	});
 
 	// Discoverability: `/modal_keybinds` prints the current configuration.
 	pi.registerCommand("modal_keybinds", {

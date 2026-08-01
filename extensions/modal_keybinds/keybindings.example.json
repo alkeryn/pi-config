@@ -1,6 +1,8 @@
 {
   "comment": "Copy the pieces you want into ~/.pi/agent/keybindings.json. The \"modal\" block is read by the modal_keybinds extension; pi itself ignores it. Entries in the modal block are deep-merged over the extension's built-in defaults, so you only need to list what you want to change.",
 
+  "comment2": "The app.message.copy rebind below is optional. Prefixes are handled by the extension directly (not pi shortcuts), so nothing conflicts and no warning is printed. But if you leave app.message.copy on ctrl+x, the modal owns ctrl+x while the editor is focused and copy would be unreachable from there, so moving it elsewhere is recommended.",
+
   "app.message.copy": ["ctrl+shift+x"],
 
   "modal": {

@@ -49,6 +49,11 @@ Why this is safe: pi's keybinding parser keeps only string / string-array values
 ids it knows and silently discards everything else, so the `"modal"` block (an
 object value under an unknown id) never interferes with pi's own keybindings.
 
+The `app.message.copy` rebind is **optional** — prefixes are handled by the
+extension directly (no pi shortcut is registered), so there is no conflict and no
+startup warning. Keep the rebind if you still want `ctrl+x`-free access to copy in
+the editor, or drop it if you don't need copy.
+
 ### Options
 
 | Option                | Effect                                                        |
@@ -62,25 +67,38 @@ Prefixes and second-level keys use the same format as `keybindings.json`
 (`ctrl+x`, `alt+m`, `shift+l`, `f5`, `up`, …). Letters are lowercase; use `shift+l`
 for uppercase.
 
-### Reserved keys
+### Where prefixes fire
 
-pi **silently skips** extension shortcuts that collide with a set of reserved
-built-in keybindings. That includes `ctrl+x` (`app.message.copy`), `ctrl+g`
-(`app.editor.external`), `ctrl+p`, `ctrl+l`, `ctrl+o`, `ctrl+t`, `ctrl+k`,
-`ctrl+c`, `ctrl+d`, `ctrl+z`, `escape`, `enter`, `alt+enter`, `shift+tab`.
+Prefixes are matched by a single TUI-level input listener, **not** by
+`pi.registerShortcut`, so:
 
-To use one of those as a modal prefix, rebind the built-in away from it in the
-**same file** (then `/reload`):
+- A prefix only fires while the **input editor is focused**. In selectors and
+  overlays the key passes through untouched — e.g. `/scoped-models` keeps its own
+  `ctrl+x` **clear**, and `ctrl+x` never pops the modal menu there.
+- No built-in key is "reserved" and no shortcut-conflict warning is printed at
+  startup, whatever key you pick for a prefix.
+- While the editor is focused, a prefix key is captured before the editor sees it,
+  so it shadows that key's editor meaning (that's the point of a modal prefix).
 
-```json
-{
-  "app.message.copy": ["ctrl+shift+x"],
-  "modal": { "bindings": { "ctrl+x": { "l": { "type": "model" } } } }
-}
-```
+### Design notes / maintenance
 
-The extension checks your prefixes at load time and warns (with a concrete
-`keybindings.json` suggestion) if a prefix is still reserved.
+Prefix handling does **not** use `pi.registerShortcut` (that would make pi emit a
+startup conflict warning for keys like `ctrl+x`, which is also bound to
+`app.models.clearAll` / `/scoped-models` "clear"). Instead a single
+`ctx.ui.onTerminalInput` listener detects prefix presses, and only starts a modal
+when the focused component is the input editor. This depends on a few pi
+internals that are not a documented extension API:
+
+- `tui.focusedComponent instanceof Editor` (captured from an invisible empty
+  widget) — relies on pi's editor class hierarchy and on the extension sharing
+  pi's pi-tui module instance.
+- Per-session (re)registration via `session_start`/`session_shutdown`, because
+  extension contexts go stale when the session is replaced.
+
+If a pi update breaks any of these (silent failure: prefixes stop firing), the
+fallback is trivial: go back to `pi.registerShortcut(prefix, …)` per prefix and
+accept the cosmetic startup warning, or rebind the colliding built-in
+(e.g. `"app.models.clearAll": ["ctrl+shift+a"]`).
 
 ### Action types
 
@@ -132,6 +150,9 @@ your config into `keybindings.json` when convenient.
 
 - While a prefix is waiting for the second key, a menu widget is shown above the
   editor listing the available keys, plus a footer status. `esc`/`ctrl+c` cancels.
+- Prefixes only fire while the input editor is focused; in selectors/overlays the
+  key is left untouched for the focused component (e.g. `ctrl+x` stays "clear" in
+  `/scoped-models`).
 - Key release/repeat events are ignored while waiting: the next key must be a
   genuine fresh press (so `ctrl+x`, releasing ctrl, then releasing `x` doesn't
   false-trigger an `x` binding — press `x` again to fire it).
@@ -159,5 +180,7 @@ your config into `keybindings.json` when convenient.
 
 Run pi and press `alt+x` then `c`. The menu widget should appear above the editor
 listing `C compact · M switch model …`, and `c` should start a compaction. To try
-`ctrl+x`, add the `app.message.copy` rebind + `"ctrl+x"` prefix from the example
-above and `/reload`.
+`ctrl+x`, add the `"ctrl+x"` prefix from the example above and `/reload` (the
+`app.message.copy` rebind is optional). No startup warning should appear, and in a
+`/scoped-models` selector `ctrl+x` should still clear the model list instead of
+opening the modal.
