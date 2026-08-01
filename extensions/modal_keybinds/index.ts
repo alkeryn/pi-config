@@ -71,6 +71,24 @@ export interface ModalConfig {
 /** Custom JS handlers, referenced from config via `{ "type": "handler", "name": "..." }`. */
 export type CustomHandler = (ctx: ExtensionContext, pi: ExtensionAPI) => void | Promise<void>;
 
+/**
+ * Shared cross-extension handler registry.
+ *
+ * Other extensions register callable functions here (e.g. the `undo-redo`
+ * extension registers `undo` and `redo`), and keybindings.json can invoke them
+ * with `{ "type": "handler", "name": "undo" }`. Resolution order: this
+ * extension's own `handlers` map first, then the global registry.
+ */
+export type ExternalHandler = CustomHandler;
+
+function getExternalRegistry(): Record<string, ExternalHandler> {
+	const g = globalThis as { __piExtensionHandlers?: Record<string, ExternalHandler> };
+	if (!g.__piExtensionHandlers) {
+		g.__piExtensionHandlers = {};
+	}
+	return g.__piExtensionHandlers;
+}
+
 // ---------------------------------------------------------------------------
 // Custom handlers (extend this registry to add JS actions)
 // ---------------------------------------------------------------------------
@@ -463,7 +481,8 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 		}
 		case "handler": {
 			const name = typeof a.name === "string" ? a.name : "";
-			const handler = handlers[name];
+			// Local handlers first, then the shared registry (other extensions).
+			const handler = handlers[name] ?? getExternalRegistry()[name];
 			if (!handler) {
 				ctx.ui.notify(`${label}: unknown handler "${name}"`, "error");
 				return;

@@ -7,7 +7,9 @@
       "ctrl+x": {
         "c": { "type": "compact", "label": "Compact conversation" },
         "m": { "type": "model", "label": "Switch model" },
-        "x": { "type": "copy", "label": "Copy last assistant message" }
+        "x": { "type": "copy", "label": "Copy last assistant message" },
+        "u": { "type": "handler", "name": "undo", "label": "Undo last message" },
+        "r": { "type": "handler", "name": "redo", "label": "Redo last message" }
       }
     }
   }
