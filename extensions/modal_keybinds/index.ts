@@ -4,9 +4,26 @@
  * Lets you bind key *sequences* like `ctrl+x` then `l` to actions, similar to
  * emacs key chords or vim leader keys. Any depth is supported (`alt+x` `g` `b`).
  *
- * Configuration lives in `~/.pi/agent/modal_keybinds.json` (global). The file
- * is deep-merged over the defaults below, so you only need to list what you
- * want to change. See modal_keybinds.example.json and README.md in this folder.
+ * Configuration (later sources win, merged per prefix):
+ *  1. built-in defaults below,
+ *  2. legacy `~/.pi/agent/modal_keybinds.json`,
+ *  3. the `"modal"` block inside `~/.pi/agent/keybindings.json` (recommended):
+ *
+ *     {
+ *       "app.message.copy": ["ctrl+shift+x"],   // frees ctrl+x for the prefix
+ *       "modal": {
+ *         "timeoutMs": 7000,
+ *         "bindings": {
+ *           "ctrl+x": {
+ *             "c": { "type": "compact", "label": "Compact conversation" },
+ *             "m": { "type": "model", "label": "Switch model" }
+ *           }
+ *         }
+ *       }
+ *     }
+ *
+ * pi ignores unknown keys and non-array values in keybindings.json, so the
+ * `"modal"` block is inert as far as pi's own keybinding engine is concerned.
  *
  * How it works:
  *  - A shortcut is registered for every first-level prefix key (e.g. `ctrl+x`).
@@ -219,21 +236,103 @@ function sanitizeBindings(bindings: { [key: string]: Binding }, path: string): {
 	return out;
 }
 
-function loadConfig(): ModalConfig {
-	let fileConfig: ModalConfig = {};
-	const file = join(getAgentDir(), "modal_keybinds.json");
-	if (existsSync(file)) {
-		try {
-			fileConfig = JSON.parse(readFileSync(file, "utf8")) as ModalConfig;
-		} catch (err) {
-			console.error(`modal_keybinds: failed to parse ${file}:`, err);
+function readJsonFile(path: string): Record<string, unknown> | undefined {
+	if (!existsSync(path)) return undefined;
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+		return isPlainObject(parsed) ? parsed : undefined;
+	} catch (err) {
+		console.error(`modal_keybinds: failed to parse ${path}:`, err);
+		return undefined;
+	}
+}
+
+/**
+ * Load the modal configuration, merging three sources (later wins):
+ *  1. built-in defaults,
+ *  2. legacy `~/.pi/agent/modal_keybinds.json`,
+ *  3. the `"modal"` block inside `~/.pi/agent/keybindings.json` (recommended).
+ * Also returns the raw keybindings.json so reserved-key conflicts can be checked.
+ */
+function loadConfig(): { config: ModalConfig; userKeybindings: Record<string, unknown> } {
+	const userKeybindings = readJsonFile(join(getAgentDir(), "keybindings.json")) ?? {};
+	const kbBlock = isPlainObject(userKeybindings["modal"]) ? (userKeybindings["modal"] as ModalConfig) : {};
+	const legacy = (readJsonFile(join(getAgentDir(), "modal_keybinds.json")) as ModalConfig | undefined) ?? {};
+
+	const bindings = deepMerge(deepMerge(DEFAULT_CONFIG.bindings ?? {}, legacy.bindings ?? {}), kbBlock.bindings ?? {});
+	const timeoutMs =
+		typeof kbBlock.timeoutMs === "number"
+			? kbBlock.timeoutMs
+			: typeof legacy.timeoutMs === "number"
+				? legacy.timeoutMs
+				: DEFAULT_CONFIG.timeoutMs;
+	return { config: { timeoutMs, bindings }, userKeybindings };
+}
+
+// ---------------------------------------------------------------------------
+// Reserved built-in keybindings
+// ---------------------------------------------------------------------------
+
+/**
+ * Built-in keybindings pi reserves from extension shortcuts (mirrors pi's
+ * RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS): an extension shortcut on one
+ * of these keys is silently skipped unless the user rebinds the built-in in
+ * keybindings.json first.
+ */
+const RESERVED_BUILTIN_DEFAULT_KEYS: Record<string, string[]> = {
+	"app.interrupt": ["escape"],
+	"app.clear": ["ctrl+c"],
+	"app.exit": ["ctrl+d"],
+	"app.suspend": ["ctrl+z"],
+	"app.thinking.cycle": ["shift+tab"],
+	"app.model.cycleForward": ["ctrl+p"],
+	"app.model.cycleBackward": ["shift+ctrl+p"],
+	"app.model.select": ["ctrl+l"],
+	"app.tools.expand": ["ctrl+o"],
+	"app.thinking.toggle": ["ctrl+t"],
+	"app.editor.external": ["ctrl+g"],
+	"app.message.copy": ["ctrl+x"],
+	"app.message.followUp": ["alt+enter"],
+	"tui.input.submit": ["enter"],
+	"tui.select.confirm": ["enter"],
+	"tui.select.cancel": ["escape", "ctrl+c"],
+	"tui.input.copy": ["ctrl+c"],
+	"tui.editor.deleteToLineEnd": ["ctrl+k"],
+};
+
+/** Resolved keys for a reserved id: user override from keybindings.json, else default. */
+function resolvedReservedKeys(id: string, userKeybindings: Record<string, unknown>): string[] {
+	const v = userKeybindings[id];
+	if (typeof v === "string") return [v];
+	if (Array.isArray(v) && v.every((e) => typeof e === "string")) return v as string[];
+	return RESERVED_BUILTIN_DEFAULT_KEYS[id] ?? [];
+}
+
+/** Suggest an alternative key for a conflict hint, e.g. `ctrl+x` -> `ctrl+shift+x`. */
+function suggestAlternative(key: string): string {
+	const base = key.split("+").pop() ?? "x";
+	return /^[a-z0-9]$/.test(base) ? `ctrl+shift+${base}` : `alt+${base}`;
+}
+
+/**
+ * Warn when a modal prefix key is still bound to a reserved built-in action:
+ * pi would silently skip that prefix's shortcut. The fix is a keybindings.json
+ * entry moving the built-in off the key.
+ */
+function checkReservedConflicts(bindings: { [key: string]: Binding }, userKeybindings: Record<string, unknown>): void {
+	for (const prefix of Object.keys(bindings)) {
+		const prefixKey = prefix.toLowerCase();
+		for (const [id, defaultKeys] of Object.entries(RESERVED_BUILTIN_DEFAULT_KEYS)) {
+			const resolved = resolvedReservedKeys(id, userKeybindings);
+			if (!resolved.some((k) => k.toLowerCase() === prefixKey)) continue;
+			const suggestion = resolved.map(suggestAlternative).join(" / ");
+			console.warn(
+				`modal_keybinds: prefix "${prefix}" is also the built-in keybinding "${id}" (${resolved.join(" / ")}). ` +
+					`pi will skip this prefix's shortcut unless you rebind the built-in in keybindings.json, ` +
+					`e.g. { "${id}": ["${suggestion}"] }.`,
+			);
 		}
 	}
-	const bindings = deepMerge(DEFAULT_CONFIG.bindings ?? {}, fileConfig.bindings ?? {});
-	return {
-		timeoutMs: typeof fileConfig.timeoutMs === "number" ? fileConfig.timeoutMs : DEFAULT_CONFIG.timeoutMs,
-		bindings,
-	};
 }
 
 /** Validate the config shape; warn on issues. Returns true when valid. */
@@ -421,7 +520,7 @@ async function pickModel(ctx: ExtensionContext, pi: ExtensionAPI): Promise<void>
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI): void {
-	const config = loadConfig();
+	const { config, userKeybindings } = loadConfig();
 	// Drop invalid keys (typos, stray JSON comments) before registering.
 	const bindings = sanitizeBindings(config.bindings ?? {}, "<root>");
 	const timeoutMs = config.timeoutMs ?? 5000;
@@ -429,6 +528,7 @@ export default function (pi: ExtensionAPI): void {
 	if (!validateConfig(bindings)) {
 		console.warn("modal_keybinds: config has errors; loading valid prefixes only.");
 	}
+	checkReservedConflicts(bindings, userKeybindings);
 
 	// Track the currently active modal so we can cancel it on shutdown/reload.
 	let activeClose: (() => void) | undefined;
@@ -459,7 +559,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerCommand("modal_keybinds", {
 		description: "List configured modal keybindings",
 		handler: (_args, ctx) => {
-			const lines: string[] = [];
+			const lines: string[] = ["config: keybindings.json → \"modal\" (legacy: modal_keybinds.json)"];
 			for (const [prefix, sub] of Object.entries(bindings)) {
 				const keys = isBindingMap(sub) ? Object.keys(sub) : [];
 				lines.push(`${prefix} → ${keys.map(keyDisplay).join(" ")}`);

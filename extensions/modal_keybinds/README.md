@@ -8,36 +8,53 @@ the model.
 
 ## Installation
 
-**Project-local** (this folder): lives at `.pi/extensions/modal_keybinds/` and is
-auto-discovered once the project is trusted. Apply with `/reload`.
+**Global** (recommended): the folder lives at `~/.pi/agent/extensions/modal_keybinds/`
+and applies to every project.
 
-**Global**: copy the folder to `~/.pi/agent/extensions/modal_keybinds/` so it applies
-to every project.
-
-```
-cp -r .pi/extensions/modal_keybinds ~/.pi/agent/extensions/
-```
+**Project-local**: copy the folder to `.pi/extensions/modal_keybinds/` (loaded only
+after the project is trusted).
 
 Then `/reload` (or restart pi).
 
 ## Configuration
 
-Create `~/.pi/agent/modal_keybinds.json`. It is **deep-merged** over the defaults
-compiled into the extension, so you only need to write the parts you want to change.
-An annotated example lives in `modal_keybinds.example.json`.
+Everything lives in the **same file as pi's own keybindings**:
+`~/.pi/agent/keybindings.json`. Put your modal bindings under a `"modal"` block —
+pi ignores it, the extension reads it. `"modal"` entries are deep-merged over the
+extension's built-in defaults, so you only need to list what you want to change.
+An annotated example lives in `keybindings.example.json`.
 
 ```json
 {
-  "timeoutMs": 5000,
-  "bindings": {
-    "alt+x": {
-      "l": { "type": "model", "label": "Switch model" },
-      "c": { "type": "compact", "label": "Compact conversation" },
-      "f": { "type": "message", "text": "Fix the latest errors.", "label": "Fix errors" }
+  "app.message.copy": ["ctrl+shift+x"],
+
+  "modal": {
+    "timeoutMs": 7000,
+    "bindings": {
+      "ctrl+x": {
+        "c": { "type": "compact", "label": "Compact conversation" },
+        "m": { "type": "model", "label": "Switch model" },
+        "f": { "type": "message", "text": "Fix the latest errors.", "label": "Fix errors" },
+        "g": {
+          "b": { "type": "notify", "message": "ctrl+x g b", "label": "agb" },
+          "r": { "type": "notify", "message": "ctrl+x g r", "label": "agr" }
+        }
+      }
     }
   }
 }
 ```
+
+Why this is safe: pi's keybinding parser keeps only string / string-array values for
+ids it knows and silently discards everything else, so the `"modal"` block (an
+object value under an unknown id) never interferes with pi's own keybindings.
+
+### Options
+
+| Option                | Effect                                                        |
+|-----------------------|---------------------------------------------------------------|
+| `modal.timeoutMs`     | How long to wait for the next key before cancelling (default 5000) |
+| `modal.bindings`      | `prefix keyId` → map of second-level `keyId` → binding        |
 
 ### Key ids
 
@@ -45,46 +62,25 @@ Prefixes and second-level keys use the same format as `keybindings.json`
 (`ctrl+x`, `alt+m`, `shift+l`, `f5`, `up`, …). Letters are lowercase; use `shift+l`
 for uppercase.
 
-### Reserved keys (important)
+### Reserved keys
 
 pi **silently skips** extension shortcuts that collide with a set of reserved
 built-in keybindings. That includes `ctrl+x` (`app.message.copy`), `ctrl+g`
 (`app.editor.external`), `ctrl+p`, `ctrl+l`, `ctrl+o`, `ctrl+t`, `ctrl+k`,
 `ctrl+c`, `ctrl+d`, `ctrl+z`, `escape`, `enter`, `alt+enter`, `shift+tab`.
 
-To use one of those as a modal prefix, first rebind the built-in away from it in
-`~/.pi/agent/keybindings.json`, then `/reload`:
+To use one of those as a modal prefix, rebind the built-in away from it in the
+**same file** (then `/reload`):
 
 ```json
 {
-  "app.message.copy": ["ctrl+shift+x"]
+  "app.message.copy": ["ctrl+shift+x"],
+  "modal": { "bindings": { "ctrl+x": { "l": { "type": "model" } } } }
 }
 ```
 
-Now `ctrl+x` is free for your modal prefix:
-
-```json
-{
-  "bindings": { "ctrl+x": { "l": { "type": "model" } } }
-}
-```
-
-Non-reserved built-in keys (e.g. `ctrl+b`, cursor movement) are also taken over by
-extension shortcuts, with a warning — best to avoid them.
-
-### Nesting
-
-A binding value can be another map of key → binding, giving you chains of any
-depth:
-
-```json
-"alt+x": {
-  "g": {
-    "b": { "type": "notify", "message": "you pressed alt+x g b" },
-    "r": { "type": "notify", "message": "you pressed alt+x g r" }
-  }
-}
-```
+The extension checks your prefixes at load time and warns (with a concrete
+`keybindings.json` suggestion) if a prefix is still reserved.
 
 ### Action types
 
@@ -115,7 +111,7 @@ export const handlers: Record<string, CustomHandler> = {
 ```
 
 ```json
-{ "bindings": { "alt+x": { "y": { "type": "handler", "name": "myHandler" } } } }
+{ "modal": { "bindings": { "ctrl+x": { "y": { "type": "handler", "name": "myHandler" } } } } }
 ```
 
 Handlers receive the shortcut `ExtensionContext` and the `ExtensionAPI`, so they can
@@ -124,32 +120,40 @@ do anything an extension can (`ctx.compact()`, `pi.setModel()`, `pi.sendUserMess
 `ctx.newSession()` / `ctx.fork()` / `ctx.reload()` are not available from a handler —
 route those through `message`/`editor` actions or an extension command instead.
 
+## Legacy config
+
+The old `~/.pi/agent/modal_keybinds.json` file still works (same shape as the
+`"modal"` block above). It is merged after the defaults but before the
+`keybindings.json` block, so the `"modal"` block wins. It's deprecated — move
+your config into `keybindings.json` when convenient.
+
 ## Behavior
 
 - While a prefix is waiting for the second key, a menu widget is shown above the
   editor listing the available keys, plus a footer status. `esc`/`ctrl+c` cancels.
 - Unmatched keys are consumed (they don't leak into the editor) — you stay in the
   chain until you pick a valid key, cancel, or the `timeoutMs` elapses.
-- `/modal_keybinds` prints the currently configured prefixes.
+- `/modal_keybinds` prints the currently configured prefixes and config source.
 - Slash commands can't be executed programmatically by pi's extension API, so to
   bind a command use `{ "type": "editor", "text": "/compact" }` (pre-fills, press
   Enter), or implement it as a `handler`.
 
 ## Default bindings
 
-| Sequence     | Action                    |
-|--------------|---------------------------|
-| `alt+x` `c`  | Compact conversation      |
-| `alt+x` `m`  | Switch model (picker)     |
-| `alt+x` `e`  | Append newline to editor  |
-| `alt+x` `f`  | "Fix the latest errors."  |
-| `alt+x` `d`  | Toggle demo widget        |
-| `alt+x` `g` `b` | Notify "agb"          |
-| `alt+x` `g` `r` | Notify "agr"          |
-| `alt+x` `g` `s` | Paste "hello from …"  |
+| Sequence        | Action                    |
+|-----------------|---------------------------|
+| `alt+x` `c`     | Compact conversation      |
+| `alt+x` `m`     | Switch model (picker)     |
+| `alt+x` `e`     | Append newline to editor  |
+| `alt+x` `f`     | "Fix the latest errors."  |
+| `alt+x` `d`     | Toggle demo widget        |
+| `alt+x` `g` `b` | Notify "agb"              |
+| `alt+x` `g` `r` | Notify "agr"              |
+| `alt+x` `g` `s` | Paste "hello from …"      |
 
 ## Testing
 
-From a trusted project, run pi and press `alt+x` then `c`. The menu widget should
-appear above the editor listing `C compact · M switch model …`, and `c` should start
-a compaction.
+Run pi and press `alt+x` then `c`. The menu widget should appear above the editor
+listing `C compact · M switch model …`, and `c` should start a compaction. To try
+`ctrl+x`, add the `app.message.copy` rebind + `"ctrl+x"` prefix from the example
+above and `/reload`.
