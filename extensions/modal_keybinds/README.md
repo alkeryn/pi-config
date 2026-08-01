@@ -33,7 +33,7 @@ An annotated example lives in `keybindings.example.json`.
     "bindings": {
       "ctrl+x": {
         "c": { "type": "compact", "label": "Compact conversation" },
-        "m": { "type": "model", "label": "Switch model" },
+        "m": { "type": "action", "name": "app.model.select", "label": "Switch model" },
         "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" },
         "f": { "type": "message", "text": "Fix the latest errors.", "label": "Fix errors" },
         "g": {
@@ -111,9 +111,7 @@ accept the cosmetic startup warning, or rebind the colliding built-in
 | `editorAppend`    | `text`             | Append to editor content                                   |
 | `editorPrepend`   | `text`             | Prepend to editor content                                  |
 | `paste`           | `text`             | Paste into editor (with paste handling)                    |
-| `compact`         | —                  | Compact the conversation (`ctx.compact()`)                 |
-| `model`           | —                  | Open pi's **native** model selector (the same component `/model` opens, rendered via `ctx.ui.custom()`) — with search, provider filtering and model switching. Your editor text is **preserved** while the selector is open and restored when it closes |
-| `copy`            | —                  | Copy the last assistant message (like pi's `app.message.copy`) |
+| `compact`         | —                  | Compact the conversation (`ctx.compact()`) — the one case below that **cannot** be an `action`: pi registers no app action for it (only the `/compact` text command), so it uses the extension API directly |
 | `key`             | `key`              | Replay a keypress through pi's own input pipeline — the focused component's keybinding matching runs exactly as if the user pressed that key. For app actions prefer `action` (below); use this for keys that aren't app actions (e.g. editor navigation chords) |
 | `action`          | `name`             | Invoke an app action **by name** — looks up the handler pi registered on the focused editor's `actionHandlers` map and calls it directly. Same handler a keybinding press would run, but no keybinding lookup: works even if the action is unbound or rebound (e.g. `app.editor.external` = open external editor) |
 | `handler`         | `name`             | Run a JS handler — first this extension's `handlers` map; a name containing `:` is emitted as a channel on `pi.events` (with `{ ctx, pi }`), so any other extension can react without modal_keybinds knowing it |
@@ -175,6 +173,14 @@ lookup. So `ctrl+x` `e` opens the configured external editor with the current
 draft exactly like `ctrl+g` — and keeps working even if you rebind or unbind
 `ctrl+g` in pi's keybindings.json.
 
+Common actions the interactive mode registers: `app.model.select` (native model
+selector — search, provider filtering, editor text preserved), `app.message.copy`
+(copy last assistant message), `app.editor.external` (open external editor),
+`app.session.new` / `app.session.resume` / `app.session.tree` / `app.session.fork`,
+`app.thinking.toggle`, `app.tools.expand`, `app.model.cycleForward`. The built-in
+defaults bind `app.model.select`; anything else is one line in your config.
+(`compact` is the one thing that can't be an action — see the table above.)
+
 ### Replaying keys: the `key` action
 
 `{ "type": "key", "key": "ctrl+g" }` replays that keypress through the TUI's
@@ -213,16 +219,17 @@ your config into `keybindings.json` when convenient.
 - `/modal_keybinds` prints the currently configured prefixes and config source.
 - Slash commands can't be invoked programmatically by pi's extension API, so for
   most commands use `{ "type": "editor", "text": "/compact" }` (pre-fills, press
-  Enter). `model` is the exception: it renders pi's own `ModelSelectorComponent`
-  directly (via `ctx.ui.custom()`), so you get the native selector with search and
-  provider filtering — and, unlike typing `/model`, your editor text is not lost.
+  Enter). App actions that pi registers on the editor (model selector, copy,
+  external editor, session new/resume, …) are invoked **natively** via
+  `{ "type": "action", "name": … }` — no text round-trip, and editor text is
+  preserved by pi's own overlay handling.
 
 ## Default bindings
 
 | Sequence        | Action                    |
 |-----------------|---------------------------|
 | `alt+x` `c`     | Compact conversation      |
-| `alt+x` `m`     | Open model selector (native, editor text preserved) |
+| `alt+x` `m`     | Open model selector (native `/model` via `action`) |
 | `alt+x` `e`     | Append newline to editor  |
 | `alt+x` `f`     | "Fix the latest errors."  |
 | `alt+x` `d`     | Toggle demo widget        |

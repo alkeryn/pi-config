@@ -19,7 +19,7 @@
     "bindings": {
       "ctrl+x": {
         "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" },
-        "l": { "type": "model", "label": "Switch model" },
+        "l": { "type": "action", "name": "app.model.select", "label": "Switch model" },
         "c": { "type": "compact", "label": "Compact conversation" },
         "x": { "type": "copy", "label": "Copy last assistant message" },
         "y": { "type": "handler", "name": "some-extension:do-thing", "label": "External handler" },

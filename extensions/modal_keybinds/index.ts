@@ -16,7 +16,7 @@
  *         "bindings": {
  *           "ctrl+x": {
  *             "c": { "type": "compact", "label": "Compact conversation" },
- *             "m": { "type": "model", "label": "Switch model" },
+ *             "m": { "type": "action", "name": "app.model.select", "label": "Switch model" },
  *             "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" }
  *           }
  *         }
@@ -48,8 +48,8 @@
  *    warnings and no built-in key is "reserved" from modal prefixes.
  */
 
-import { CustomEditor, ModelSelectorComponent, copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionContext, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Editor, Text, isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
@@ -123,7 +123,7 @@ const DEFAULT_CONFIG: ModalConfig = {
 		// the key passes through untouched.
 		"alt+x": {
 			c: { type: "compact", label: "Compact conversation" },
-			m: { type: "model", label: "Switch model" },
+			m: { type: "action", name: "app.model.select", label: "Switch model" },
 			e: { type: "editorAppend", text: "\n", label: "Append newline" },
 			f: { type: "message", text: "Fix the latest errors in the code.", label: "Fix errors" },
 			d: { type: "handler", name: "toggleDemoWidget", label: "Toggle demo widget" },
@@ -149,8 +149,6 @@ const KNOWN_ACTION_TYPES = new Set([
 	"editorPrepend",
 	"paste",
 	"compact",
-	"model",
-	"copy",
 	"key",
 	"action",
 	"handler",
@@ -169,16 +167,6 @@ function truncate(s: string, n: number): string {
 }
 
 /** Extract plain text from a message's content parts. */
-function messageText(message: { role: string; content?: unknown }): string {
-	if (!Array.isArray(message.content)) return "";
-	return message.content
-		.filter(
-			(p): p is { type: "text"; text: string } =>
-				isPlainObject(p) && p.type === "text" && typeof p.text === "string",
-		)
-		.map((p) => p.text)
-		.join("\n");
-}
 
 /** Render a key id for the menu widget: `l` → `L`, keep chords as-is. */
 function keyDisplay(keyId: string): string {
@@ -198,10 +186,6 @@ function actionDetail(a: Action): string {
 			return typeof a.text === "string" ? truncate(a.text, 40) : "";
 		case "compact":
 			return "compact conversation";
-		case "model":
-			return "open model selector (native /model)";
-		case "copy":
-			return "copy last assistant message";
 		case "key":
 			return typeof a.key === "string" ? `replay ${a.key}` : "";
 		case "action":
@@ -412,7 +396,13 @@ function validateConfig(bindings: { [prefix: string]: Binding }): boolean {
 	const check = (b: Binding, path: string): void => {
 		if (isAction(b)) {
 			if (!KNOWN_ACTION_TYPES.has(b.type)) {
-				console.warn(`modal_keybinds: unknown action type "${b.type}" at ${path}`);
+				const legacyHint =
+					b.type === "model"
+						? ' (use { "type": "action", "name": "app.model.select" })'
+						: b.type === "copy"
+							? ' (use { "type": "action", "name": "app.message.copy" })'
+							: "";
+				console.warn(`modal_keybinds: unknown action type "${b.type}" at ${path}${legacyHint}`);
 				ok = false;
 			}
 			if (b.type === "handler" && typeof b.name !== "string") {
@@ -566,29 +556,6 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 			});
 			return;
 		}
-		case "model": {
-			await showNativeModelSelector(ctx, pi);
-			return;
-		}
-		case "copy": {
-			// Replicates pi's built-in `app.message.copy` (last assistant message).
-			let text = "";
-			const branch = ctx.sessionManager.getBranch();
-			for (let i = branch.length - 1; i >= 0; i--) {
-				const entry = branch[i];
-				if (entry?.type === "message" && entry.message?.role === "assistant") {
-					text = messageText(entry.message);
-					break;
-				}
-			}
-			if (!text) {
-				ctx.ui.notify(`${label}: no assistant message to copy`, "warning");
-				return;
-			}
-			await copyToClipboard(text);
-			ctx.ui.notify(`${label}: copied ${truncate(text, 40)}`, "info");
-			return;
-		}
 		case "key": {
 			const keyId = typeof a.key === "string" ? a.key : "";
 			if (!keyId || !isValidKeyId(keyId)) {
@@ -651,56 +618,6 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 		default:
 			ctx.ui.notify(`${label}: unknown action type "${a.type}"`, "error");
 	}
-}
-
-/**
- * Open pi's native model selector — the exact same component `/model` opens.
- * Uses `ctx.ui.custom()`, which swaps the editor for the selector and restores
- * the editor *with its text* when the selector closes, so anything typed before
- * `ctrl+x` `m` is preserved.
- */
-async function showNativeModelSelector(ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
-	// The component persists the chosen default via settingsManager; pi.setModel()
-	// already does that (auth check, session change, persistence), so a no-op
-	// stub is safe here.
-	const settingsManager = {
-		setDefaultModelAndProvider: () => {},
-	} as unknown as SettingsManager;
-	// Thin adapter: the component expects a ModelRuntime, extensions only get the
-	// synchronous ModelRegistry facade.
-	const modelRuntime = {
-		getAvailableSnapshot: () => ctx.modelRegistry.getAll(),
-		getModel: (provider: string, id: string) => ctx.modelRegistry.find(provider, id),
-		refresh: async (_opts?: { signal?: AbortSignal }) => {
-			await ctx.modelRegistry.refresh();
-			return { aborted: false, errors: new Map() };
-		},
-		getError: () => ctx.modelRegistry.getError(),
-	} as unknown as ModelRuntime;
-
-	await ctx.ui.custom<unknown>((tui, _theme, _keybindings, done) => {
-		const selector = new ModelSelectorComponent(
-			tui,
-			ctx.model,
-			settingsManager,
-			modelRuntime,
-			ctx.scopedModels,
-			async (model) => {
-				try {
-					await pi.setModel(model);
-					done(undefined);
-				} catch (err) {
-					done(undefined);
-					ctx.ui.notify(
-						`modal_keybinds: ${err instanceof Error ? err.message : String(err)}`,
-						"error",
-					);
-				}
-			},
-			() => done(undefined),
-		);
-		return selector;
-	});
 }
 
 // ---------------------------------------------------------------------------

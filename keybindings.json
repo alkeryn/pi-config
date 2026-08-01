@@ -10,12 +10,14 @@
           "label": "Compact conversation"
         },
         "m": {
-          "type": "model",
+          "type": "action",
+          "name": "app.model.select",
           "label": "Switch model"
         },
         "x": {
-          "type": "copy",
-          "label": "Copy last assistant message"
+          "type": "action",
+          "name": "app.message.copy",
+          "label": "Copy last response"
         },
         "u": {
           "type": "handler",
