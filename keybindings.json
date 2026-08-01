@@ -1,49 +1,15 @@
 {
-  "app.message.copy": [
-    "ctrl+shift+x"
-  ],
   "modal": {
     "bindings": {
       "ctrl+x": {
-        "c": {
-          "type": "compact",
-          "label": "Compact conversation"
-        },
-        "m": {
-          "type": "action",
-          "name": "app.model.select",
-          "label": "Switch model"
-        },
-        "x": {
-          "type": "action",
-          "name": "app.message.copy",
-          "label": "Copy last response"
-        },
-        "u": {
-          "type": "handler",
-          "name": "undo-redo:undo",
-          "label": "Undo last message"
-        },
-        "r": {
-          "type": "handler",
-          "name": "undo-redo:redo",
-          "label": "Redo last message"
-        },
-        "l": {
-          "type": "action",
-          "name": "app.session.resume",
-          "label": "Resume session"
-        },
-        "n": {
-          "type": "action",
-          "name": "app.session.new",
-          "label": "New session"
-        },
-        "e": {
-          "type": "action",
-          "name": "app.editor.external",
-          "label": "Open external editor"
-        }
+        "c": { "type": "compact", "label": "Compact conversation" },
+        "m": { "type": "action", "name": "app.model.select", "label": "Switch model" },
+        "x": { "type": "action", "name": "app.message.copy", "label": "Copy last response" },
+        "u": { "type": "handler", "name": "undo-redo:undo", "label": "Undo last message" },
+        "r": { "type": "handler", "name": "undo-redo:redo", "label": "Redo last message" },
+        "l": { "type": "action", "name": "app.session.resume", "label": "Resume session" },
+        "n": { "type": "action", "name": "app.session.new", "label": "New session" },
+        "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" }
       }
     }
   }
