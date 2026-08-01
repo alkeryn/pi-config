@@ -16,11 +16,17 @@
  *         "bindings": {
  *           "ctrl+x": {
  *             "c": { "type": "compact", "label": "Compact conversation" },
- *             "m": { "type": "model", "label": "Switch model" }
+ *             "m": { "type": "model", "label": "Switch model" },
+ *             "e": { "type": "key", "key": "ctrl+g", "label": "Open external editor" }
  *           }
  *         }
  *       }
  *     }
+ *
+ * The `key` action replays a keypress through pi's own input pipeline, so the
+ * focused component's keybinding handling runs exactly as if the user had
+ * pressed that key — e.g. replaying `ctrl+g` triggers pi's native
+ * `app.editor.external` (open external editor) without duplicating its code.
  *
  * pi ignores unknown keys and non-array values in keybindings.json, so the
  * `"modal"` block is inert as far as pi's own keybinding engine is concerned.
@@ -143,6 +149,7 @@ const KNOWN_ACTION_TYPES = new Set([
 	"compact",
 	"model",
 	"copy",
+	"key",
 	"handler",
 ]);
 
@@ -192,6 +199,8 @@ function actionDetail(a: Action): string {
 			return "open model selector (native /model)";
 		case "copy":
 			return "copy last assistant message";
+		case "key":
+			return typeof a.key === "string" ? `replay ${a.key}` : "";
 		case "handler":
 			return typeof a.name === "string" ? `handler: ${a.name}` : "";
 		default:
@@ -251,6 +260,93 @@ function isValidKeyId(keyId: string): boolean {
 	if (SPECIAL_KEYS.has(key)) return true;
 	if (SYMBOL_KEYS.has(key)) return true;
 	return false;
+}
+
+/**
+ * Encode a key id (e.g. `ctrl+g`) as the raw terminal bytes a real keypress
+ * would produce, so the `key` action can replay it through the TUI's normal
+ * input pipeline (input listeners → focused component → its keybinding
+ * matching). Uses pi-tui's accepted legacy sequences and CSI-u sequences
+ * (parsed regardless of whether the kitty keyboard protocol is active).
+ * Returns undefined for keys with no representable encoding (e.g. modified
+ * f-keys or super combos, which pi's matcher itself cannot match).
+ */
+function keyIdToRaw(keyId: string): string | undefined {
+	const parts = keyId.toLowerCase().split("+");
+	const mods = new Set(parts.slice(0, -1));
+	const key = parts[parts.length - 1] ?? "";
+	if (mods.has("super")) return undefined; // super cannot be emulated
+	const ctrl = mods.has("ctrl");
+	const alt = mods.has("alt");
+	const shift = mods.has("shift");
+	const mod = (shift ? 1 : 0) | (alt ? 2 : 0) | (ctrl ? 4 : 0);
+
+	// Unmodified keys: plain character or a legacy sequence (always accepted).
+	if (mod === 0) {
+		const legacy: Record<string, string> = {
+			escape: "\x1b", esc: "\x1b", enter: "\r", return: "\r",
+			tab: "\t", space: " ", backspace: "\x7f",
+			up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
+			home: "\x1b[H", end: "\x1b[F", pageup: "\x1b[5~", pagedown: "\x1b[6~",
+			insert: "\x1b[2~", delete: "\x1b[3~",
+			f1: "\x1bOP", f2: "\x1bOQ", f3: "\x1bOR", f4: "\x1bOS",
+			f5: "\x1b[15~", f6: "\x1b[17~", f7: "\x1b[18~", f8: "\x1b[19~",
+			f9: "\x1b[20~", f10: "\x1b[21~", f11: "\x1b[23~", f12: "\x1b[24~",
+		};
+		if (key in legacy) return legacy[key];
+		if (key.length === 1) return key; // plain letter / digit / symbol
+		return undefined;
+	}
+
+	// Pure shift or ctrl on navigation keys: legacy modified sequences.
+	const navLegacy: Record<string, [string, string]> = {
+		up: ["\x1b[a", "\x1bOa"], down: ["\x1b[b", "\x1bOb"],
+		right: ["\x1b[c", "\x1bOc"], left: ["\x1b[d", "\x1bOd"],
+		insert: ["\x1b[2$", "\x1b[2^"], delete: ["\x1b[3$", "\x1b[3^"],
+		pageup: ["\x1b[5$", "\x1b[5^"], pagedown: ["\x1b[6$", "\x1b[6^"],
+		home: ["\x1b[7$", "\x1b[7^"], end: ["\x1b[8$", "\x1b[8^"],
+	};
+	if (!alt && key in navLegacy) {
+		if (shift && !ctrl) return navLegacy[key][0];
+		if (ctrl && !shift) return navLegacy[key][1];
+	}
+	if (alt && !ctrl && !shift) {
+		const altArrows: Record<string, string> = { up: "\x1bp", down: "\x1bn", right: "\x1bf", left: "\x1bb" };
+		if (key in altArrows) return altArrows[key];
+	}
+	if (shift && !ctrl && !alt && key === "tab") return "\x1b[Z"; // shift+tab
+
+	// Printable keys with modifiers: the raw control char for ctrl (always
+	// accepted), uppercase for shift+letter, else a CSI-u sequence
+	// \x1b[<codepoint>;<mod+1>u — pi-tui parses those in every terminal mode.
+	if (key.length === 1 && /^[\x20-\x7e]$/.test(key)) {
+		if (ctrl && !alt && !shift) {
+			const raw = ctrlChar(key);
+			if (raw !== undefined) return raw;
+		}
+		if (shift && !ctrl && !alt && /^[a-z]$/.test(key)) return key.toUpperCase();
+		return `\x1b[${key.charCodeAt(0)};${mod + 1}u`;
+	}
+
+	// Special keys with modifiers via CSI-u functional codepoints.
+	const specialCp: Record<string, number> = { space: 32, tab: 9, enter: 13, return: 13, backspace: 127 };
+	if (key in specialCp) return `\x1b[${specialCp[key]};${mod + 1}u`;
+	const funcNum: Record<string, number> = { insert: 2, delete: 3, pageup: 5, pagedown: 6, home: 7, end: 8 };
+	if (key in funcNum) return `\x1b[${funcNum[key]};${mod + 1}~`;
+	const arrowLetter: Record<string, string> = { up: "A", down: "B", right: "C", left: "D" };
+	if (key in arrowLetter) return `\x1b[1;${mod + 1}${arrowLetter[key]}`;
+
+	return undefined;
+}
+
+/** Control character for a printable key, like a real terminal sends (code & 0x1f). */
+function ctrlChar(key: string): string | undefined {
+	const code = key.charCodeAt(0);
+	if ((code >= 97 && code <= 122) || key === "[" || key === "\\" || key === "]" || key === "_") {
+		return String.fromCharCode(code & 0x1f);
+	}
+	if (key === "-") return "\x1f"; // same physical key as ctrl+_ on US layouts
+	return undefined;
 }
 
 /**
@@ -318,6 +414,10 @@ function validateConfig(bindings: { [prefix: string]: Binding }): boolean {
 				console.warn(`modal_keybinds: handler action at ${path} is missing a "name"`);
 				ok = false;
 			}
+			if (b.type === "key" && (typeof b.key !== "string" || !isValidKeyId(b.key))) {
+				console.warn(`modal_keybinds: key action at ${path} needs a valid "key" (e.g. "ctrl+g")`);
+				ok = false;
+			}
 			return;
 		}
 		for (const [k, v] of Object.entries(b)) check(v, `${path} ${k}`);
@@ -345,6 +445,7 @@ function enterModal(
 	bindings: { [key: string]: Binding },
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
+	tuiRef: TUI | undefined,
 	timeoutMs?: number,
 	onActiveChange: (close: (() => void) | undefined) => void,
 ): void {
@@ -398,14 +499,14 @@ function enterModal(
 			if (matchesKey(data, keyId)) {
 				close();
 				if (isAction(binding)) {
-					void executeAction(binding, path.concat(keyId), ctx, pi).catch((err: unknown) => {
+					void executeAction(binding, path.concat(keyId), ctx, pi, tuiRef).catch((err: unknown) => {
 						ctx.ui.notify(
 							`modal_keybinds: ${err instanceof Error ? err.message : String(err)}`,
 							"error",
 						);
 					});
 				} else {
-					enterModal(path.concat(keyId), binding, ctx, pi, timeoutMs, onActiveChange);
+					enterModal(path.concat(keyId), binding, ctx, pi, tuiRef, timeoutMs, onActiveChange);
 				}
 				return { consume: true };
 			}
@@ -415,7 +516,7 @@ function enterModal(
 	});
 }
 
-async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
+async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi: ExtensionAPI, tuiRef: TUI | undefined): Promise<void> {
 	const label = `modal_keybinds ${seq.join(" ")}`;
 	switch (a.type) {
 		case "notify": {
@@ -477,6 +578,29 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 			}
 			await copyToClipboard(text);
 			ctx.ui.notify(`${label}: copied ${truncate(text, 40)}`, "info");
+			return;
+		}
+		case "key": {
+			const keyId = typeof a.key === "string" ? a.key : "";
+			if (!keyId || !isValidKeyId(keyId)) {
+				ctx.ui.notify(`${label}: "key" needs a valid key id (e.g. "ctrl+g")`, "error");
+				return;
+			}
+			if (!tuiRef) {
+				ctx.ui.notify(`${label}: TUI not ready yet`, "error");
+				return;
+			}
+			const raw = keyIdToRaw(keyId);
+			if (raw === undefined) {
+				ctx.ui.notify(`${label}: cannot replay "${keyId}"`, "error");
+				return;
+			}
+			// Replay the keypress through pi's own input pipeline (input listeners
+			// → focused component). The focused editor's keybinding matching then
+			// dispatches the bound app action, so pi's existing handler runs
+			// exactly as if the user had pressed the key — e.g. ctrl+g →
+			// app.editor.external (pi's native external editor flow).
+			tuiRef.handleInput(raw);
 			return;
 		}
 		case "handler": {
@@ -601,7 +725,7 @@ export default function (pi: ExtensionAPI): void {
 			for (const [prefixKey, subBindings] of Object.entries(bindings)) {
 				if (!isBindingMap(subBindings)) continue; // already warned in validateConfig
 				if (matchesKey(data, prefixKey) && currentCtx) {
-					enterModal([prefixKey], subBindings, currentCtx, pi, timeoutMs, setActive);
+					enterModal([prefixKey], subBindings, currentCtx, pi, tuiRef, timeoutMs, setActive);
 					return { consume: true };
 				}
 			}
