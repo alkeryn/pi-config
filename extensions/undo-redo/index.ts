@@ -131,14 +131,12 @@ export default function (pi: ExtensionAPI): void {
 
 	/** Bridge for plain ExtensionContexts: run the command via the editor submit path. */
 	function runViaEditor(ctx: ExtensionContext, command: "undo" | "redo"): void {
-		if (ctx.ui.getEditorText().trim()) {
-			ctx.ui.notify(`undo-redo: editor not empty — clear it or run /${command} manually`, "warning");
-			return;
-		}
 		if (!tuiRef) {
 			ctx.ui.notify("undo-redo: TUI not ready yet", "error");
 			return;
 		}
+		// setEditorText discards whatever is currently in the editor — the draft
+		// is intentionally dropped (undo/redo always win over pending input).
 		ctx.ui.setEditorText(`/${command}`);
 		// Submits the editor: same path as typing /undo + Enter. The editor
 		// clears itself before onSubmit() runs, so the command handler's
