@@ -66,8 +66,11 @@ the editor, or drop it if you don't need copy.
 ### Key ids
 
 Prefixes and second-level keys use the same format as `keybindings.json`
-(`ctrl+x`, `alt+m`, `shift+l`, `f5`, `up`, …). Letters are lowercase; use `shift+l`
-for uppercase.
+(`ctrl+x`, `alt+m`, `shift+l`, `f5`, `up`, …). **Letter case is significant**:
+`l` and `L` are different bindings — an uppercase letter means the shift
+variant, so `"L"` is equivalent to `"shift+l"`. The menu shows keys exactly as
+configured. (This deliberately differs from pi's own keybindings, where `L` and
+`l` are the same key; in the modal, case is meaningful.)
 
 ### Where prefixes fire
 

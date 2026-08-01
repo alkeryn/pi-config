@@ -31,6 +31,10 @@
  * The `key` type instead replays a keypress through pi's input pipeline for
  * keys that aren't app actions (e.g. editor navigation chords).
  *
+ * Key ids are case-sensitive: `l` and `L` are distinct bindings — an uppercase
+ * letter means shift held (`L` = `shift+l`), and the menu shows keys exactly as
+ * configured.
+ *
  * pi ignores unknown keys and non-array values in keybindings.json, so the
  * `"modal"` block is inert as far as pi's own keybinding engine is concerned.
  *
@@ -154,9 +158,25 @@ function truncate(s: string, n: number): string {
 
 /** Extract plain text from a message's content parts. */
 
-/** Render a key id for the menu widget: `l` → `L`, keep chords as-is. */
+/** Render a key id for the menu widget exactly as configured (case is significant). */
 function keyDisplay(keyId: string): string {
-	return /^[a-z]$/.test(keyId) ? keyId.toUpperCase() : keyId;
+	return keyId;
+}
+
+/**
+ * Letter case is significant in modal key ids: an uppercase letter means the
+ * shift variant (`L` = shift+l, and `l` ≠ `L`). pi-tui's matcher lowercases
+ * key ids (so `"L"` would behave like `"l"`), so map an uppercase-letter key
+ * to `shift+<lowercase>` before matching or encoding.
+ */
+function normalizeKeyId(keyId: string): string {
+	const parts = keyId.toLowerCase().split("+");
+	const key = parts[parts.length - 1] ?? "";
+	const lastSegment = keyId.split("+").pop() ?? "";
+	if (/^[A-Z]$/.test(lastSegment) && !parts.includes("shift")) {
+		return [...parts.slice(0, -1), "shift", key].join("+");
+	}
+	return parts.join("+");
 }
 
 function actionDetail(a: Action): string {
@@ -247,6 +267,7 @@ function isValidKeyId(keyId: string): boolean {
  * f-keys or super combos, which pi's matcher itself cannot match).
  */
 function keyIdToRaw(keyId: string): string | undefined {
+	keyId = normalizeKeyId(keyId);
 	const parts = keyId.toLowerCase().split("+");
 	const mods = new Set(parts.slice(0, -1));
 	const key = parts[parts.length - 1] ?? "";
@@ -481,7 +502,7 @@ function enterModal(
 		}
 		// Match a second-level key
 		for (const [keyId, binding] of Object.entries(bindings)) {
-			if (matchesKey(data, keyId)) {
+			if (matchesKey(data, normalizeKeyId(keyId))) {
 				close();
 				if (isAction(binding)) {
 					void executeAction(binding, path.concat(keyId), ctx, pi, tuiRef).catch((err: unknown) => {
@@ -657,7 +678,7 @@ export default function (pi: ExtensionAPI): void {
 			if (!(tuiRef?.focusedComponent instanceof Editor)) return { consume: false };
 			for (const [prefixKey, subBindings] of Object.entries(bindings)) {
 				if (!isBindingMap(subBindings)) continue; // already warned in validateConfig
-				if (matchesKey(data, prefixKey) && currentCtx) {
+				if (matchesKey(data, normalizeKeyId(prefixKey)) && currentCtx) {
 					enterModal([prefixKey], subBindings, currentCtx, pi, tuiRef, timeoutMs, setActive);
 					return { consume: true };
 				}

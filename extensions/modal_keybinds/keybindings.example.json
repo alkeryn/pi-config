@@ -9,6 +9,8 @@
 
   "comment5": "timeout_ms: how long to wait for the next key before cancelling. Omit it for NO timeout — the modal waits until you pick a key, press escape, or ctrl+c.",
 
+  "comment7": "Letter case is significant: \"l\" and \"L\" are different bindings (uppercase = shift held, so \"L\" means shift+l), and the menu shows keys exactly as configured.",
+
   "app.message.copy": ["ctrl+shift+x"],
 
   "modal": {
@@ -20,6 +22,7 @@
         "x": { "type": "action", "name": "app.message.copy", "label": "Copy last response" },
         "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" },
         "l": { "type": "action", "name": "app.session.resume", "label": "Resume session" },
+        "L": { "type": "notify", "message": "shift+L fired (uppercase = shift)", "label": "Uppercase L" },
         "n": { "type": "action", "name": "app.session.new", "label": "New session" },
         "c": { "type": "compact", "label": "Compact conversation" },
         "y": { "type": "handler", "name": "some-extension:do-thing", "label": "External handler" },
