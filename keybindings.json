@@ -1,17 +1,47 @@
 {
-  "app.message.copy": ["ctrl+shift+x"],
-
+  "app.message.copy": [
+    "ctrl+shift+x"
+  ],
   "modal": {
     "bindings": {
       "ctrl+x": {
-        "c": { "type": "compact", "label": "Compact conversation" },
-        "m": { "type": "model", "label": "Switch model" },
-        "x": { "type": "copy", "label": "Copy last assistant message" },
-        "u": { "type": "handler", "name": "undo-redo:undo", "label": "Undo last message" },
-        "r": { "type": "handler", "name": "undo-redo:redo", "label": "Redo last message" },
-        "l": { "type": "handler", "name": "session-actions:resume", "label": "Resume session" },
-        "n": { "type": "handler", "name": "session-actions:new", "label": "New session" },
-        "e": { "type": "key", "key": "ctrl+g", "label": "Open external editor" }
+        "c": {
+          "type": "compact",
+          "label": "Compact conversation"
+        },
+        "m": {
+          "type": "model",
+          "label": "Switch model"
+        },
+        "x": {
+          "type": "copy",
+          "label": "Copy last assistant message"
+        },
+        "u": {
+          "type": "handler",
+          "name": "undo-redo:undo",
+          "label": "Undo last message"
+        },
+        "r": {
+          "type": "handler",
+          "name": "undo-redo:redo",
+          "label": "Redo last message"
+        },
+        "l": {
+          "type": "handler",
+          "name": "session-actions:resume",
+          "label": "Resume session"
+        },
+        "n": {
+          "type": "handler",
+          "name": "session-actions:new",
+          "label": "New session"
+        },
+        "e": {
+          "type": "action",
+          "name": "app.editor.external",
+          "label": "Open external editor"
+        }
       }
     }
   }

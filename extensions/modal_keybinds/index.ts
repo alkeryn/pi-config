@@ -17,16 +17,18 @@
  *           "ctrl+x": {
  *             "c": { "type": "compact", "label": "Compact conversation" },
  *             "m": { "type": "model", "label": "Switch model" },
- *             "e": { "type": "key", "key": "ctrl+g", "label": "Open external editor" }
+ *             "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" }
  *           }
  *         }
  *       }
  *     }
  *
- * The `key` action replays a keypress through pi's own input pipeline, so the
- * focused component's keybinding handling runs exactly as if the user had
- * pressed that key — e.g. replaying `ctrl+g` triggers pi's native
- * `app.editor.external` (open external editor) without duplicating its code.
+ * The `action` type invokes an app action by name: it looks up the handler pi
+ * registered for it (the focused editor's `actionHandlers` map) and calls it
+ * directly — the same handler a keybinding press would run, but without any
+ * keybinding lookup, so it works even if the action is unbound or rebound.
+ * The `key` type instead replays a keypress through pi's input pipeline for
+ * keys that aren't app actions (e.g. editor navigation chords).
  *
  * pi ignores unknown keys and non-array values in keybindings.json, so the
  * `"modal"` block is inert as far as pi's own keybinding engine is concerned.
@@ -46,7 +48,7 @@
  *    warnings and no built-in key is "reserved" from modal prefixes.
  */
 
-import { ModelSelectorComponent, copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, ModelSelectorComponent, copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Editor, Text, isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
@@ -150,6 +152,7 @@ const KNOWN_ACTION_TYPES = new Set([
 	"model",
 	"copy",
 	"key",
+	"action",
 	"handler",
 ]);
 
@@ -201,6 +204,8 @@ function actionDetail(a: Action): string {
 			return "copy last assistant message";
 		case "key":
 			return typeof a.key === "string" ? `replay ${a.key}` : "";
+		case "action":
+			return typeof a.name === "string" ? `run ${a.name}` : "";
 		case "handler":
 			return typeof a.name === "string" ? `handler: ${a.name}` : "";
 		default:
@@ -418,6 +423,10 @@ function validateConfig(bindings: { [prefix: string]: Binding }): boolean {
 				console.warn(`modal_keybinds: key action at ${path} needs a valid "key" (e.g. "ctrl+g")`);
 				ok = false;
 			}
+			if (b.type === "action" && (typeof b.name !== "string" || b.name.length === 0)) {
+				console.warn(`modal_keybinds: action at ${path} needs a "name" (e.g. "app.editor.external")`);
+				ok = false;
+			}
 			return;
 		}
 		for (const [k, v] of Object.entries(b)) check(v, `${path} ${k}`);
@@ -601,6 +610,27 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 			// exactly as if the user had pressed the key — e.g. ctrl+g →
 			// app.editor.external (pi's native external editor flow).
 			tuiRef.handleInput(raw);
+			return;
+		}
+		case "action": {
+			const name = typeof a.name === "string" ? a.name : "";
+			if (!name) {
+				ctx.ui.notify(`${label}: "action" needs a "name" (e.g. "app.editor.external")`, "error");
+				return;
+			}
+			if (!tuiRef) {
+				ctx.ui.notify(`${label}: TUI not ready yet`, "error");
+				return;
+			}
+			const editor = tuiRef.focusedComponent;
+			if (!(editor instanceof CustomEditor) || !editor.actionHandlers.has(name)) {
+				ctx.ui.notify(`${label}: no action "${name}" registered on the focused editor`, "error");
+				return;
+			}
+			// Call pi's registered handler for the app action directly — the very
+			// same handler keybinding dispatch would run, without any keybinding
+			// lookup. Rebinding or unbinding the action's key has no effect here.
+			editor.actionHandlers.get(name)!();
 			return;
 		}
 		case "handler": {

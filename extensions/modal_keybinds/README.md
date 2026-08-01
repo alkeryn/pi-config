@@ -34,7 +34,7 @@ An annotated example lives in `keybindings.example.json`.
       "ctrl+x": {
         "c": { "type": "compact", "label": "Compact conversation" },
         "m": { "type": "model", "label": "Switch model" },
-        "e": { "type": "key", "key": "ctrl+g", "label": "Open external editor" },
+        "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" },
         "f": { "type": "message", "text": "Fix the latest errors.", "label": "Fix errors" },
         "g": {
           "b": { "type": "notify", "message": "ctrl+x g b", "label": "agb" },
@@ -114,7 +114,8 @@ accept the cosmetic startup warning, or rebind the colliding built-in
 | `compact`         | —                  | Compact the conversation (`ctx.compact()`)                 |
 | `model`           | —                  | Open pi's **native** model selector (the same component `/model` opens, rendered via `ctx.ui.custom()`) — with search, provider filtering and model switching. Your editor text is **preserved** while the selector is open and restored when it closes |
 | `copy`            | —                  | Copy the last assistant message (like pi's `app.message.copy`) |
-| `key`             | `key`              | Replay a keypress through pi's own input pipeline — the focused component's keybinding matching runs exactly as if the user pressed that key (e.g. `ctrl+g` → pi's native `app.editor.external`), so existing pi code runs with zero duplication |
+| `key`             | `key`              | Replay a keypress through pi's own input pipeline — the focused component's keybinding matching runs exactly as if the user pressed that key. For app actions prefer `action` (below); use this for keys that aren't app actions (e.g. editor navigation chords) |
+| `action`          | `name`             | Invoke an app action **by name** — looks up the handler pi registered on the focused editor's `actionHandlers` map and calls it directly. Same handler a keybinding press would run, but no keybinding lookup: works even if the action is unbound or rebound (e.g. `app.editor.external` = open external editor) |
 | `handler`         | `name`             | Run a JS handler — first this extension's `handlers` map; a name containing `:` is emitted as a channel on `pi.events` (with `{ ctx, pi }`), so any other extension can react without modal_keybinds knowing it |
 
 `label` is optional on any action and is shown in the modal menu widget.
@@ -163,18 +164,28 @@ registry and no global state; the name is the contract.
 Note: `pi.events.emit` is fire-and-forget — if nothing subscribes to the channel,
 the key press silently does nothing (check for typos in the `name`).
 
+### Invoking app actions: the `action` type
+
+`{ "type": "action", "name": "app.editor.external" }` looks up the handler pi
+registered for that action on the focused editor's `actionHandlers` map (every
+app action — `app.editor.*`, `app.message.*`, `app.navigation.*`, … — is
+registered there while the interactive editor is focused) and calls it directly:
+the **same handler a keybinding press would run**, but with no keybinding
+lookup. So `ctrl+x` `e` opens the configured external editor with the current
+draft exactly like `ctrl+g` — and keeps working even if you rebind or unbind
+`ctrl+g` in pi's keybindings.json.
+
 ### Replaying keys: the `key` action
 
 `{ "type": "key", "key": "ctrl+g" }` replays that keypress through the TUI's
 normal input pipeline (input listeners → focused component). The editor's own
-keybinding matching then dispatches the bound app action — so pi's **existing
-handler runs unchanged**: `ctrl+g` is pi's default for `app.editor.external`
-(open external editor), which means `ctrl+x` `e` above opens the configured
-external editor with the current editor content, exactly like pressing `ctrl+g`.
-No handler code is duplicated, and if you rebind `ctrl+g` in pi's own
-keybindings.json, `ctrl+x` `e` follows the new action.
+keybinding matching then dispatches the bound app action — the result is the
+same, but it depends on the action actually being bound to that key (if you
+rebind `ctrl+g`, the replay follows the new action). Prefer `action` for app
+actions; `key` is the fallback for keys that are **not** app actions (e.g.
+editor navigation chords handled by pi-tui itself).
 
-Supported key ids: printable keys (`g`, `1`, `/`, …), `ctrl`/`alt`/`shift`
+Supported key ids for `key`: printable keys (`g`, `1`, `/`, …), `ctrl`/`alt`/`shift`
 combinations of them (`ctrl+g`, `alt+x`, `shift+l`, `ctrl+alt+g`, `ctrl+shift+g`),
 navigation keys with modifiers (`up`, `shift+left`, `ctrl+home`, `alt+up`, …), and
 `f1`–`f12` (unmodified). Keys that pi's own matcher cannot match are rejected

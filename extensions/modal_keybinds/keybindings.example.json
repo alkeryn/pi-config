@@ -9,7 +9,7 @@
 
   "comment5": "Concrete consumer extensions subscribe to their own channels. E.g. the session-actions extension handles \"session-actions:new\" (like /new) and \"session-actions:resume\" (like /resume): bind them as { \"type\": \"handler\", \"name\": \"session-actions:new\" } — no registration or lookup table needed, the name is the channel.",
 
-  "comment6": "The \"key\" action replays a keypress through pi's own input pipeline — the focused component's keybinding matching runs exactly as if the user pressed it. ctrl+g below is pi's default for app.editor.external (open external editor), so ctrl+x e reuses pi's existing handler with zero duplication.",
+  "comment6": "The \"action\" type invokes an app action by name: it looks up the handler pi registered on the focused editor's actionHandlers map and calls it directly — no keybinding lookup, so it works even if the action is unbound or rebound. app.editor.external is pi's open-external-editor action; ctrl+x e below reuses pi's existing handler with zero duplication. (The \"key\" type is the fallback for keys that aren't app actions, e.g. editor navigation chords.)",
 
   "app.message.copy": ["ctrl+shift+x"],
 
@@ -18,7 +18,7 @@
 
     "bindings": {
       "ctrl+x": {
-        "e": { "type": "key", "key": "ctrl+g", "label": "Open external editor" },
+        "e": { "type": "action", "name": "app.editor.external", "label": "Open external editor" },
         "l": { "type": "model", "label": "Switch model" },
         "c": { "type": "compact", "label": "Compact conversation" },
         "x": { "type": "copy", "label": "Copy last assistant message" },
