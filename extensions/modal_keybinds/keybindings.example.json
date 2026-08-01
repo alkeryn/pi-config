@@ -7,6 +7,8 @@
 
   "comment4": "timeout_ms: how long to wait for the next key before cancelling. Omit it for NO timeout — the modal waits until you pick a key, press escape, or ctrl+c.",
 
+  "comment5": "Concrete consumer extensions subscribe to their own channels. E.g. the session-actions extension handles \"session-actions:new\" (like /new) and \"session-actions:resume\" (like /resume): bind them as { \"type\": \"handler\", \"name\": \"session-actions:new\" } — no registration or lookup table needed, the name is the channel.",
+
   "app.message.copy": ["ctrl+shift+x"],
 
   "modal": {
