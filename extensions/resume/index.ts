@@ -1,40 +1,43 @@
 /**
- * Resume aborted responses + send aborted messages to the model (pi extension)
+ * Resume interrupted responses + send incomplete assistant messages to the model
+ * (pi extension)
  *
  * Two related behaviors:
  *
- * 1. **Send aborted messages (default ON, setting `send_aborted_message`).**
+ * 1. **Send incomplete messages (opt-in, setting `send_aborted_message`).**
  *    pi's provider layer (`transformMessages`) silently drops assistant
- *    messages whose `stopReason` is `"aborted"`, so after you abort a reply the
- *    model has no idea what it was writing — typing "continue" starts a fresh
- *    answer. With this extension, text-bearing aborted assistant messages are
- *    re-included in the context sent to the model (incomplete toolCall blocks
- *    stripped, stop reason neutralized), so the model continues from where it
- *    was cut off.
+ *    messages whose `stopReason` is `"aborted"` **or** `"error"`, so after you
+ *    abort a reply (or a turn fails mid-stream) the model has no idea what it
+ *    was writing — typing "continue" starts a fresh answer. When enabled, this
+ *    extension re-includes text-bearing incomplete assistant messages in the
+ *    context sent to the model (incomplete toolCall blocks stripped, stop
+ *    reason neutralized), so the model continues from where it was cut off.
  *
  *    Setting: `"send_aborted_message": true` in `~/.pi/agent/settings.json`
- *    (default when absent: **true**). Toggle with `/send-aborted` or
- *    `/send-aborted on|off`.
+ *    (default when absent: **false** — pi's normal behavior). Toggle with
+ *    `/send-aborted` or `/send-aborted on|off`. Covers both aborted and errored
+ *    turns.
  *
  * 2. **Continue on empty Enter.** When the editor is EMPTY and Enter (the
- *    submit key) is pressed while the last assistant message was aborted (and
- *    has streamed text), this extension resumes that response: the partial
- *    assistant message is kept as the final context item sent to the LLM,
- *    which then continues writing from where it was cut off — mirroring the
- *    "Continue Response" button in Open WebUI. Requires `send_aborted_message`
- *    to be enabled (it is by default).
+ *    submit key) is pressed while the last assistant message was interrupted
+ *    (stopReason `"aborted"` or `"error"`, and has streamed text), this
+ *    extension resumes that response: the partial assistant message is kept as
+ *    the final context item sent to the LLM, which then continues writing from
+ *    where it was cut off — mirroring the "Continue Response" button in Open
+ *    WebUI. Requires `send_aborted_message` to be enabled (opt-in).
  *
  * Mechanism:
  *   1. A CustomEditor wraps the default editor and intercepts the submit key on
  *      an empty editor.
- *   2. If the last assistant message was aborted (and has text), it injects an
- *      invisible custom marker message and triggers a new agent turn.
+ *   2. If the last assistant message was interrupted (and has text), it injects
+ *      an invisible custom marker message and triggers a new agent turn.
  *   3. The `context` extension event removes the marker (always) and makes
- *      aborted assistant messages sendable (when the setting is on), so the
+ *      incomplete assistant messages sendable (when the setting is on), so the
  *      provider sees [history…, assistant: "<partial text>"] as context and
  *      continues the partial text.
  *
- * The continuation appears as a new assistant message following the aborted one.
+ * The continuation appears as a new assistant message following the interrupted
+ * one.
  *
  * Usage:
  *   pi --extension ./index.ts
@@ -60,11 +63,12 @@ const MARKER_TYPE = "pi-resume-marker";
 const MARKER_FALLBACK_TEXT = "Continue";
 
 /**
- * settings.json key controlling behavior (1): send aborted assistant messages
- * to the model. Default true when the key is absent.
+ * settings.json key controlling behavior (1): send incomplete assistant
+ * messages (stopReason "aborted" or "error") to the model. Default false when
+ * the key is absent (pi's normal behavior: incomplete turns are dropped).
  */
 const SETTINGS_KEY = "send_aborted_message";
-const SETTINGS_DEFAULT = true;
+const SETTINGS_DEFAULT = false;
 
 interface ContentBlock {
     type: string;
@@ -126,11 +130,17 @@ function setSendAbortedEnabled(enabled: boolean): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Aborted-message transform
+// Incomplete-message transform
 // ---------------------------------------------------------------------------
-function isAbortedAssistant(msg: unknown): msg is AssistantMessageLike {
+/**
+ * An assistant message whose turn was interrupted: user-aborted ("aborted") or
+ * failed mid-stream ("error"). pi's provider layer (`transformMessages`)
+ * skips both stop reasons, so neither reaches the model by default.
+ */
+function isIncompleteAssistant(msg: unknown): msg is AssistantMessageLike {
     const m = msg as AssistantMessageLike;
-    return m?.role === "assistant" && m.stopReason === "aborted";
+    return m?.role === "assistant" &&
+        (m.stopReason === "aborted" || m.stopReason === "error");
 }
 
 function hasStreamedText(msg: AssistantMessageLike): boolean {
@@ -143,12 +153,13 @@ function hasStreamedText(msg: AssistantMessageLike): boolean {
 }
 
 /**
- * Make an aborted assistant message sendable to the LLM:
- * - strip incomplete toolCall blocks (no tool results exist for an aborted turn)
+ * Make an incomplete assistant message sendable to the LLM:
+ * - strip incomplete toolCall blocks (no tool results exist for an
+ *   aborted/errored turn)
  * - neutralize the stop reason, otherwise pi's provider layer
  *   (`transformMessages`) drops the message before it reaches the model
  */
-function makeAbortedMessageSendable(msg: AssistantMessageLike): void {
+function makeIncompleteMessageSendable(msg: AssistantMessageLike): void {
     msg.stopReason = "stop";
     msg.content = (msg.content ?? []).filter((block) => block.type !== "toolCall");
 }
@@ -202,7 +213,7 @@ export default function (pi: ExtensionAPI): void {
 
         ctx.ui.setEditorComponent((tui, theme, keybindings) => {
             return new ResumeEditor(tui, theme, keybindings, () =>
-                maybeResumeAborted(ctx)
+                maybeResumeIncomplete(ctx)
             );
         });
     });
@@ -212,9 +223,10 @@ export default function (pi: ExtensionAPI): void {
     //
     // 1. Markers (from empty-Enter resume) are removed from context on every
     //    call; they must never reach the LLM.
-    // 2. When `send_aborted_message` is enabled (default), every text-bearing
-    //    aborted assistant message is made sendable, so a normal "continue"
-    //    typed after an abort keeps the partial text in context.
+    // 2. When `send_aborted_message` is enabled (opt-in), every text-bearing
+    //    incomplete assistant message (stopReason "aborted" or "error") is made
+    //    sendable, so a normal "continue" typed after an abort (or a failed
+    //    turn) keeps the partial text in context.
     // -----------------------------------------------------------------------
     pi.on("context", (event) => {
         const messages = event.messages;
@@ -236,10 +248,10 @@ export default function (pi: ExtensionAPI): void {
                 changed = true;
                 continue; // never sent to the LLM
             }
-            if (sendAborted && isAbortedAssistant(m) && hasStreamedText(m)) {
+            if (sendAborted && isIncompleteAssistant(m) && hasStreamedText(m)) {
                 changed = true;
                 const copy = { ...m, content: [...(m.content ?? [])] };
-                makeAbortedMessageSendable(copy);
+                makeIncompleteMessageSendable(copy);
                 next.push(copy);
                 continue;
             }
@@ -253,7 +265,7 @@ export default function (pi: ExtensionAPI): void {
     // -----------------------------------------------------------------------
     pi.registerCommand("send-aborted", {
         description:
-            "Toggle sending aborted assistant messages to the model (settings.json `send_aborted_message`, default on). Usage: /send-aborted [on|off]",
+            "Toggle sending aborted/errored assistant messages to the model (settings.json `send_aborted_message`, default off). Usage: /send-aborted [on|off]",
         handler: async (args, ctx) => {
             const arg = args.trim().toLowerCase();
             let next: boolean;
@@ -280,7 +292,7 @@ export default function (pi: ExtensionAPI): void {
     // -----------------------------------------------------------------------
     // Empty-Enter resume: decide whether to resume, and do it.
     // -----------------------------------------------------------------------
-    function maybeResumeAborted(ctx: ExtensionContext): boolean {
+    function maybeResumeIncomplete(ctx: ExtensionContext): boolean {
         try {
             if (!isSendAbortedEnabled()) {
                 return false;
@@ -298,7 +310,7 @@ export default function (pi: ExtensionAPI): void {
                 stopReason?: string;
                 content?: Array<{ type: string; text?: string; thinking?: string }>;
             };
-            if (msg.stopReason !== "aborted") {
+            if (msg.stopReason !== "aborted" && msg.stopReason !== "error") {
                 return false;
             }
 
@@ -337,7 +349,7 @@ export default function (pi: ExtensionAPI): void {
 
     async function triggerResume(ctx: ExtensionContext): Promise<void> {
         if (uiAvailable) {
-            ctx.ui.notify("Resuming aborted response…", "info");
+            ctx.ui.notify("Resuming interrupted response…", "info");
         }
         try {
             // Invisible marker message; triggerTurn runs the agent. The `context`
