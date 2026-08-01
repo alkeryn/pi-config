@@ -75,12 +75,10 @@ export type CustomHandler = (ctx: ExtensionContext, pi: ExtensionAPI) => void | 
  * Cross-extension handler dispatch via pi's shared event bus (`pi.events`).
  *
  * A `handler` name containing a `:` is an event channel: modal_keybinds emits
- * `{ ctx, pi }` on it and lets other extensions handle it. The `undo-redo`
- * extension subscribes to `"undo-redo:undo"` / `"undo-redo:redo"`, so
- * keybindings.json can call it with
- * `{ "type": "handler", "name": "undo-redo:undo" }` — the name is literally
- * the channel. modal_keybinds stays completely unaware of which extension (if
- * any) listens; names without a colon are local handlers in `handlers`.
+ * `{ ctx, pi }` on it and lets other extensions handle it. The name is
+ * literally the channel, so any extension may subscribe to it without
+ * modal_keybinds knowing it exists; names without a colon are local handlers
+ * in `handlers`.
  *
  * Note: `pi.events.emit` is fire-and-forget — if nothing subscribes to a
  * channel, the key press silently does nothing.

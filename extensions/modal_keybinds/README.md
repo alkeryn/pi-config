@@ -113,7 +113,7 @@ accept the cosmetic startup warning, or rebind the colliding built-in
 | `compact`         | —                  | Compact the conversation (`ctx.compact()`)                 |
 | `model`           | —                  | Open pi's **native** model selector (the same component `/model` opens, rendered via `ctx.ui.custom()`) — with search, provider filtering and model switching. Your editor text is **preserved** while the selector is open and restored when it closes |
 | `copy`            | —                  | Copy the last assistant message (like pi's `app.message.copy`) |
-| `handler`         | `name`             | Run a JS handler — first this extension's `handlers` map, then emit `{ ctx, pi }` on `pi.events` channel `name` (e.g. `"undo-redo:undo"`), so other extensions can react without modal_keybinds knowing them |
+| `handler`         | `name`             | Run a JS handler — first this extension's `handlers` map; a name containing `:` is emitted as a channel on `pi.events` (with `{ ctx, pi }`), so any other extension can react without modal_keybinds knowing it |
 
 `label` is optional on any action and is shown in the modal menu widget.
 
@@ -149,17 +149,14 @@ completely unaware of which extension (if any) listens:
 
 ```json
 { "modal": { "bindings": { "ctrl+x": {
-  "u": { "type": "handler", "name": "undo-redo:undo", "label": "Undo last message" },
-  "r": { "type": "handler", "name": "undo-redo:redo", "label": "Redo last message" }
+  "y": { "type": "handler", "name": "some-extension:do-thing", "label": "External handler" }
 } } } }
 ```
 
-The bundled **`undo-redo`** extension (install it alongside this one) subscribes to
-`"undo-redo:undo"` / `"undo-redo:redo"`: `/undo` reverts to the last user message
-(same as selecting it in `/tree` without a summary), `/redo` restores the abandoned
-turn. From a modal keybind, undo/redo run the command through the editor submit
-path, so the session and chat stay fully in sync; if the editor holds a draft the
-key is ignored with a notification rather than clobbering it.
+The `ctx` and `pi` received by the subscriber are the same as for local handlers
+(the shortcut `ExtensionContext` and the `ExtensionAPI`). The channel name is
+whatever you and the extension you coordinate with agree on — there is no shared
+registry and no global state; the name is the contract.
 
 Note: `pi.events.emit` is fire-and-forget — if nothing subscribes to the channel,
 the key press silently does nothing (check for typos in the `name`).
