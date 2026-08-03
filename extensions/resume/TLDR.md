@@ -19,10 +19,13 @@ Two behaviors:
 2. **Continue on empty Enter.** When the editor is EMPTY and Enter (the submit
    key) is pressed while the last assistant message was interrupted
    (`stopReason` `"aborted"` or `"error"`, and has streamed text), this
-   extension resumes that response: the partial assistant message is
-   kept as the final context item sent to the LLM, which continues writing from
-   the cut-off point — mirroring the "Continue Response" button in Open WebUI.
-   Requires `send_aborted_message` to be enabled (opt-in).
+   extension resumes that response — mirroring the "Continue Response" button
+   in Open WebUI. Works regardless of `send_aborted_message`:
+   - **on**: the partial assistant message is kept as the final context item
+     sent to the LLM, which continues writing from the cut-off point;
+   - **off**: the partial text is **not** sent (pi's provider layer drops it as
+     usual) and the model starts a fresh response to an invisible "Continue"
+     prompt.
 
 ## How "continue" works at the API level
 
@@ -62,17 +65,18 @@ Two behaviors:
 1. **Intercept** (resume feature): a `CustomEditor` wraps the default editor; on
    the submit key (Enter, remap-aware) with an empty/whitespace editor, it checks
    for a resume candidate instead of the usual no-op.
-2. **Check**: `send_aborted_message` enabled + idle session + last assistant message
-   has `stopReason` `"aborted"`/`"error"` and streamed text. Otherwise Enter stays a
-   no-op.
+2. **Check**: idle session + last assistant message has `stopReason`
+   `"aborted"`/`"error"` and streamed text. Otherwise Enter stays a no-op.
+   (No longer gated on `send_aborted_message`.)
 3. **Trigger**: sends an invisible custom marker message (`display: false`) with
    `triggerTurn: true` → starts a new agent turn.
-4. **Transform**: the `context` extension event removes markers (always) and makes
-   every text-bearing interrupted assistant message sendable (when the setting is
-   on):
-   strip incomplete `toolCall` blocks, set `stopReason` to `"stop"`. The provider
-   receives `[history…, assistant: "<partial text>", user: "continue"]` (or, on a
-   resume turn, ends with the partial assistant message) and continues the text.
+4. **Transform**: the `context` extension event removes markers (always; when
+   `send_aborted_message` is off it becomes an invisible "Continue" user prompt
+   instead) and makes every text-bearing interrupted assistant message sendable
+   (when the setting is on): strip incomplete `toolCall` blocks, set `stopReason`
+   to `"stop"`. The provider receives `[history…, assistant: "<partial text>"]`
+   and continues the text (setting on), or `[history…, user: "Continue"]` for a
+   fresh response (setting off).
 
 ## Limitations
 

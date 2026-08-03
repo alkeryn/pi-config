@@ -21,20 +21,25 @@
  * 2. **Continue on empty Enter.** When the editor is EMPTY and Enter (the
  *    submit key) is pressed while the last assistant message was interrupted
  *    (stopReason `"aborted"` or `"error"`, and has streamed text), this
- *    extension resumes that response: the partial assistant message is kept as
- *    the final context item sent to the LLM, which then continues writing from
- *    where it was cut off — mirroring the "Continue Response" button in Open
- *    WebUI. Requires `send_aborted_message` to be enabled (opt-in).
+ *    extension resumes that response — mirroring the "Continue Response"
+ *    button in Open WebUI. Works regardless of `send_aborted_message`:
+ *    - **on**: the partial assistant message is kept as the final context item
+ *      sent to the LLM, which continues writing from the cut-off point;
+ *    - **off**: the partial text is NOT sent (pi's provider layer drops it as
+ *      usual) and the model starts a fresh response to an invisible "Continue"
+ *      prompt.
  *
  * Mechanism:
  *   1. A CustomEditor wraps the default editor and intercepts the submit key on
  *      an empty editor.
  *   2. If the last assistant message was interrupted (and has text), it injects
  *      an invisible custom marker message and triggers a new agent turn.
- *   3. The `context` extension event removes the marker (always) and makes
- *      incomplete assistant messages sendable (when the setting is on), so the
- *      provider sees [history…, assistant: "<partial text>"] as context and
- *      continues the partial text.
+ *   3. The `context` extension event removes the marker (always; when
+ *      `send_aborted_message` is off it becomes an invisible "Continue" user
+ *      prompt instead, since the partial text is dropped) and, when the setting
+ *      is on, makes incomplete assistant messages sendable, so the provider
+ *      sees [history…, assistant: "<partial text>"] and continues the partial
+ *      text (or [history…, user: "Continue"] for a fresh response).
  *
  * The continuation appears as a new assistant message following the interrupted
  * one.
@@ -55,10 +60,12 @@ const MARKER_TYPE = "pi-resume-marker";
 
 /**
  * Fallback content carried by the marker. In normal operation the `context`
- * transform removes the marker before the provider call, so NO user message is
- * ever sent to the LLM. This text only matters if that transform fails
- * (extension error): the model would then see a short "Continue" user message
- * instead of nothing, which still points it at the partial assistant text.
+ * transform consumes the marker before the provider call: when
+ * `send_aborted_message` is on it is removed entirely (the partial assistant
+ * text is the final context item); when off it becomes an invisible user
+ * "Continue" prompt (the partial text is dropped). This text only matters if
+ * that transform fails (extension error): the model would then see a short
+ * "Continue" user message, which still points it at the interrupted text.
  */
 const MARKER_FALLBACK_TEXT = "Continue";
 
@@ -221,8 +228,11 @@ export default function (pi: ExtensionAPI): void {
     // -----------------------------------------------------------------------
     // Context transform — runs before every LLM call.
     //
-    // 1. Markers (from empty-Enter resume) are removed from context on every
-    //    call; they must never reach the LLM.
+    // 1. Markers (from empty-Enter resume) are dropped when `send_aborted_message`
+    //    is on (the partial assistant text becomes the final context item). When
+    //    the setting is off the marker is converted into an invisible "Continue"
+    //    user prompt, since the interrupted message is dropped by pi's provider
+    //    layer and the model still needs a user turn.
     // 2. When `send_aborted_message` is enabled (opt-in), every text-bearing
     //    incomplete assistant message (stopReason "aborted" or "error") is made
     //    sendable, so a normal "continue" typed after an abort (or a failed
@@ -246,7 +256,33 @@ export default function (pi: ExtensionAPI): void {
         for (const m of messages) {
             if (isMarker(m)) {
                 changed = true;
-                continue; // never sent to the LLM
+                if (sendAborted) {
+                    // Setting on: the interrupted message below is made sendable
+                    // and serves as the final context item, so drop the marker
+                    // entirely — never sent to the LLM.
+                    continue;
+                }
+                // Setting off: the interrupted assistant message is dropped by
+                // pi's provider layer, so turn the invisible marker into a
+                // fresh "Continue" user prompt — otherwise the model would get
+                // no user turn at all.
+                const marker = m as unknown as {
+                    content?: string | ContentBlock[];
+                    id?: string;
+                    timestamp?: string;
+                };
+                const userMessage: Record<string, unknown> = {
+                    role: "user",
+                    content: marker.content ?? MARKER_FALLBACK_TEXT,
+                };
+                if (marker.id !== undefined) {
+                    userMessage.id = marker.id;
+                }
+                if (marker.timestamp !== undefined) {
+                    userMessage.timestamp = marker.timestamp;
+                }
+                next.push(userMessage);
+                continue;
             }
             if (sendAborted && isIncompleteAssistant(m) && hasStreamedText(m)) {
                 changed = true;
@@ -294,9 +330,9 @@ export default function (pi: ExtensionAPI): void {
     // -----------------------------------------------------------------------
     function maybeResumeIncomplete(ctx: ExtensionContext): boolean {
         try {
-            if (!isSendAbortedEnabled()) {
-                return false;
-            }
+            // Works regardless of send_aborted_message: with the setting on the
+            // partial text is replayed to the model (it continues the text);
+            // with it off the partial text is dropped (fresh response).
             if (!ctx.isIdle() || ctx.hasPendingMessages()) {
                 return false;
             }
@@ -349,7 +385,12 @@ export default function (pi: ExtensionAPI): void {
 
     async function triggerResume(ctx: ExtensionContext): Promise<void> {
         if (uiAvailable) {
-            ctx.ui.notify("Resuming interrupted response…", "info");
+            ctx.ui.notify(
+                isSendAbortedEnabled()
+                    ? "Resuming interrupted response…"
+                    : "Continuing…",
+                "info"
+            );
         }
         try {
             // Invisible marker message; triggerTurn runs the agent. The `context`
