@@ -443,6 +443,22 @@ function validateConfig(bindings: { [prefix: string]: Binding }): boolean {
 // Modal state machine
 // ---------------------------------------------------------------------------
 
+/**
+ * Feed raw bytes into the TUI's input pipeline (input listeners → focused
+ * component), exactly as if they came from the terminal. pi ≥ 0.89 renamed
+ * the entrypoint from `TUI.handleInput` to `handleTerminalInput`; keep the
+ * old name as a fallback so this still works on older installs.
+ */
+function replayInput(tui: TUI, data: string): void {
+	const t = tui as unknown as {
+		handleTerminalInput?: (data: string) => void;
+		handleInput?: (data: string) => void;
+	};
+	if (typeof t.handleTerminalInput === "function") t.handleTerminalInput(data);
+	else if (typeof t.handleInput === "function") t.handleInput(data);
+	else throw new Error("TUI has no handleTerminalInput/handleInput entrypoint");
+}
+
 const WIDGET_KEY = "modal_keybinds";
 const STATUS_KEY = "modal_keybinds";
 
@@ -583,7 +599,7 @@ async function executeAction(a: Action, seq: string[], ctx: ExtensionContext, pi
 			// dispatches the bound app action, so pi's existing handler runs
 			// exactly as if the user had pressed the key — e.g. ctrl+g →
 			// app.editor.external (pi's native external editor flow).
-			tuiRef.handleInput(raw);
+			replayInput(tuiRef, raw);
 			return;
 		}
 		case "action": {

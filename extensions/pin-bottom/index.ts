@@ -61,7 +61,8 @@ import * as fs from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Editor, isKeyRelease, Key, matchesKey, Text, TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Editor, isKeyRelease, Key, matchesKey, Text, TuiMainScreen, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 
 // ---------------------------------------------------------------------------
 // State
@@ -279,15 +280,23 @@ function patchTuiRender(): void {
 	if (patched) return;
 	patched = true;
 
-	const proto = TUI.prototype as unknown as {
+	// pi 0.87+: `TUI` is a type-only export; the runtime classes are
+	// TuiMainScreen (normal mode) and TuiAltScreen (fullscreen mode). Patching
+	// TuiMainScreen.prototype covers normal mode while leaving pi's native
+	// fullscreen mode untouched.
+	const origRender = Container.prototype.render;
+	const base = TuiMainScreen.prototype as unknown as {
 		render(width: number): string[];
 	};
 
-	proto.render = function (this: TUI, width: number): string[] {
+	base.render = function (this: TUI, width: number): string[] {
+		// TuiAltScreen overrides render itself; keep its fallback path intact.
+		if (!(this instanceof TuiMainScreen)) return origRender.call(this, width);
+
 		tuiRef = this;
 
 		const children = (this as any).children as any[];
-		if (!Array.isArray(children)) return proto.render.call(this, width);
+		if (!Array.isArray(children)) return origRender.call(this, width);
 
 		const parts: string[][] = [];
 		for (const child of children) parts.push(child.render(width));
@@ -300,7 +309,7 @@ function patchTuiRender(): void {
 
 		const height = (this as any).terminal?.rows;
 		if (typeof height !== "number" || height <= 0) {
-			return [...contentLines, ...barLines];
+			return origRender.call(this, width);
 		}
 
 		const available = Math.max(0, height - barLines.length);
@@ -358,7 +367,9 @@ function patchTuiRender(): void {
  * events (keeping native click-drag selection intact).
  */
 function patchTuiStart(): void {
-	const proto = TUI.prototype as unknown as {
+	// TuiMainScreen defines its own `start` (shadowing TuiBase's), so patch it
+	// there — TuiAltScreen (pi's native fullscreen mode) is left untouched.
+	const proto = TuiMainScreen.prototype as unknown as {
 		start(...args: unknown[]): unknown;
 	};
 	const origStart = proto.start;
@@ -366,6 +377,9 @@ function patchTuiStart(): void {
 	(origStart as any).__pinBottomPatched = true;
 
 	proto.start = function (this: TUI, ...args: unknown[]): unknown {
+		// Only pin the bottom bar in normal (main-screen) mode; pi's native
+		// fullscreen mode manages its own alternate screen.
+		if (!(this instanceof TuiMainScreen)) return origStart.call(this, ...args);
 		try {
 			if (process.stdout.isTTY && config.wheel) {
 				(this as any).terminal?.write?.(ENTER_ALT_SCREEN);

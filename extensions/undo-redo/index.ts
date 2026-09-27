@@ -212,6 +212,22 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
+	/**
+	 * Feed raw bytes into the TUI's input pipeline (input listeners → focused
+	 * component), exactly as if they came from the terminal. pi ≥ 0.89 renamed
+	 * the entrypoint from `TUI.handleInput` to `handleTerminalInput`; keep the
+	 * old name as a fallback so this still works on older installs.
+	 */
+	function replayInput(tui: TUI, data: string): void {
+		const t = tui as unknown as {
+			handleTerminalInput?: (data: string) => void;
+			handleInput?: (data: string) => void;
+		};
+		if (typeof t.handleTerminalInput === "function") t.handleTerminalInput(data);
+		else if (typeof t.handleInput === "function") t.handleInput(data);
+		else throw new Error("TUI has no handleTerminalInput/handleInput entrypoint");
+	}
+
 	/** Bridge for plain ExtensionContexts: run the command via the editor submit path. */
 	function runViaEditor(ctx: ExtensionContext, command: "undo" | "redo"): void {
 		if (!tuiRef) {
@@ -231,8 +247,7 @@ export default function (pi: ExtensionAPI): void {
 		// Submits the editor: same path as typing /undo + Enter. The editor
 		// clears itself before onSubmit() runs, so the command handler's
 		// editor-text restoration still applies.
-		// TUI.handleInput is private in the typings but present at runtime.
-		(tuiRef as unknown as { handleInput(data: string): void }).handleInput("\r");
+		replayInput(tuiRef, "\r");
 	}
 
 	async function handleExternal(ctx: ExtensionContext, pi: ExtensionAPI, fn: "undo" | "redo"): Promise<void> {
