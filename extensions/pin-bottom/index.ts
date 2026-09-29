@@ -276,6 +276,12 @@ function concat(parts: string[][]): string[] {
 	return out;
 }
 
+/** True when a rendered block has at least one line with visible content
+ *  (a bare Spacer renders as an empty line, so it does not count). */
+function hasVisibleLines(lines: string[]): boolean {
+	return lines.some((line) => line.replace(/\x1b\[[0-9;?<>=]*[a-zA-Z]/g, "").trim().length > 0);
+}
+
 function patchTuiRender(): void {
 	if (patched) return;
 	patched = true;
@@ -304,8 +310,19 @@ function patchTuiRender(): void {
 		const editorIndex = findEditorContainerIndex(children, (this as any).focusedComponent);
 		if (editorIndex === -1) return concat(parts);
 
-		const contentLines = concat(parts.slice(0, editorIndex));
-		const barLines = concat(parts.slice(editorIndex));
+		// Above-editor widgets with visible content (e.g. the modal_keybinds
+		// menu shown via ctx.ui.setWidget) belong to the pinned bottom bar, not
+		// to the scrolling transcript — otherwise the menu renders right after
+		// the last message and scrolls away while the editor stays pinned.
+		// widgetContainerAbove sits immediately before the editor container and
+		// renders only a spacer line when empty (pi adds one even with no
+		// widgets), so the visible-content test keeps the bar unchanged when
+		// nothing is shown.
+		let barStart = editorIndex;
+		if (barStart > 0 && hasVisibleLines(parts[barStart - 1])) barStart -= 1;
+
+		const contentLines = concat(parts.slice(0, barStart));
+		const barLines = concat(parts.slice(barStart));
 
 		const height = (this as any).terminal?.rows;
 		if (typeof height !== "number" || height <= 0) {
