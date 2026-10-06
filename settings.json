@@ -6,5 +6,6 @@
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents"
-  ]
+  ],
+  "hideThinkingBlock": false
 }
